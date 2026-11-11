@@ -7,33 +7,36 @@ calcular el estado de cada zona, distribuir actualizaciones y alertas, responder
 consultas y conservar un histórico. La descripción de este documento está
 alineada con el [README](../README.md) vigente en `develop`.
 
-El enunciado académico compartido exige generación aleatoria de datos e
-integración de Apache Kafka y RabbitMQ en una solución distribuida orquestada
-con Docker Compose. La arquitectura detallada a continuación —incluida la
-distribución en cinco VMs, los siete microservicios, la autenticación y la
-segmentación— es el diseño propuesto por el equipo, no una afirmación de que
-cada detalle sea requisito expreso del enunciado ni de que ya esté implementado.
+El Proyecto 12 exige una arquitectura distribuida con cinco VMs, siete
+microservicios, Apache Kafka y Kafka Streams, RabbitMQ, autenticación,
+`nftables`, POO, PostgreSQL, pruebas y control de recursos, además de la
+generación aleatoria de datos y la orquestación con Docker Compose. La
+distribución exacta de servicios entre zonas y los detalles de configuración
+descritos aquí son diseño del equipo, no una afirmación de que ya estén
+implementados.
 
 ## Cinco zonas de despliegue
 
-| VM / zona | Componentes propuestos | Responsabilidad |
+| VM / zona | Componentes asignados en el diseño | Responsabilidad |
 |---|---|---|
-| `vm-auth` — autoridad | `auth_server` | Autenticar identidades de servicio, emitir JWT y publicar claves públicas JWKS. |
+| `vm-auth` — autoridad | `auth_server` | Proveer autenticación. La emisión de JWT y la publicación de claves mediante JWKS son propuestas de diseño. |
 | `vm-data` — datos | Apache Kafka, RabbitMQ y PostgreSQL, en contenedores independientes | Alojar mensajería y persistencia; limitar el acceso a los servicios autorizados. |
 | `vm-ingest` — ingesta | `traffic_sensor_simulator` | Generar lecturas aleatorias de sensores y publicarlas en Kafka. |
 | `vm-core` — procesamiento | `traffic_density_processor`, `traffic_archiver` | Calcular el estado de tráfico por zona, publicar actualizaciones y guardar lecturas originales en PostgreSQL. |
 | `vm-app` — aplicación | `user_dashboard_backend`, `alert_dispatcher`, `query_client` y `dashboard.html` | Servir el dashboard en tiempo real, gestionar alertas y responder consultas. `dashboard.html` es la interfaz web, no un microservicio. |
 
-Cada VM tendrá su despliegue Docker. El equipo propone Docker Compose por zona;
-no se plantea una sola red Docker plana que conecte indiscriminadamente todas
-las VMs. La configuración de redes, recursos y aprovisionamiento sigue
-pendiente de validación.
+El requisito de Docker Compose aplica a la orquestación del proyecto. El equipo
+propone desplegar por zona, sin una única red Docker plana que conecte
+indiscriminadamente todas las VMs. La topología de redes y el alcance exacto
+de Compose entre VMs siguen pendientes de validación.
 
 ## Responsabilidades de los servicios
 
-- **`auth_server`:** autenticar clientes de servicio, emitir JWT firmados con
-  RS256 y publicar claves públicas mediante JWKS. La clave privada permanece
-  únicamente bajo su control.
+- **`auth_server`:** proveer la autenticación requerida para los servicios. El
+  diseño propone emitir JWT y publicar claves públicas mediante JWKS; el
+  algoritmo de firma, el endpoint y los detalles del protocolo deben
+  confirmarse. Si se utiliza firma asimétrica, la clave privada debe permanecer
+  protegida en la autoridad.
 - **`traffic_sensor_simulator`:** generar lecturas aleatorias identificadas
   por sensor y zona, validarlas y enviarlas a Kafka.
 - **`traffic_density_processor`:** consumir lecturas de Kafka, procesarlas con
@@ -93,17 +96,19 @@ requieren decisiones de diseño y pruebas.
 
 ## Identidad y seguridad entre servicios
 
-El diseño del equipo propone identidades separadas para cada servicio y
-autenticación de servicio a servicio mediante JWT RS256. `auth_server` publica
-las claves públicas por JWKS; los consumidores validan tokens según claims,
-audiencia, expiración y permisos que se definan. La clave privada no debe
-copiarse a otros servicios.
+La autenticación es un requisito del Proyecto 12. El equipo propone identidades
+separadas para cada servicio y autenticación de servicio a servicio mediante
+tokens. JWT, RS256, JWKS, claims, audiencias, scopes y renovación son detalles
+del diseño que deben confirmarse contra el enunciado completo y aprobarse; no
+se deben presentar como requisitos explícitos si el enunciado no los especifica.
+La clave privada, si se adopta firma asimétrica, no debe copiarse a otros
+servicios.
 
-Para Kafka, el README propone SASL/OAUTHBEARER y ACL. Para RabbitMQ propone el
-plugin OAuth2, autenticación de conexión y permisos sobre exchanges y colas. La
-autenticación no concede por sí misma acceso a todos los recursos. Para
-PostgreSQL se proponen credenciales específicas para `traffic_archiver`;
-los JWT de los brokers no sustituyen esa autenticación.
+El requisito es autenticar las comunicaciones; SASL/OAUTHBEARER, ACL y el
+plugin OAuth2 de RabbitMQ son mecanismos propuestos. Los permisos sobre topics,
+exchanges y colas deben ser de mínimo privilegio. Para PostgreSQL se propone
+una identidad de base de datos limitada para `traffic_archiver`; los tokens de
+los brokers no sustituyen la autenticación de PostgreSQL.
 
 TLS y la aplicación efectiva de permisos se deben configurar y comprobar. La
 presencia de estos mecanismos en el diseño no significa que estén
@@ -112,19 +117,19 @@ reales en Git.
 
 ## Segmentación, Docker y recursos
 
-La arquitectura propone cinco zonas VM independientes y reglas de `nftables`
-con denegación por defecto: permitir solo los flujos autorizados y bloquear el
-resto. Las reglas definitivas dependen de la matriz de comunicaciones y de la
-validación del tráfico que atraviese las redes Docker. La
+El Proyecto 12 requiere `nftables`. La política de denegación por defecto y
+permitir solo flujos autorizados es la propuesta del equipo, no una regla
+numérica ya aprobada. Las reglas definitivas dependen de la matriz de
+comunicaciones y de la validación del tráfico que atraviese las redes Docker. La
 [matriz de comunicaciones](./network-matrix.md) registra los flujos conocidos
 y deja sin especificar los puertos no acordados.
 
-Docker y Docker Compose permiten desplegar y reproducir los componentes por
-VM, pero no reemplazan la segmentación entre VMs ni la autorización. Se propone
-aislar los servicios, ejecutar contenedores de aplicación sin privilegios y
-establecer límites de CPU y memoria según los recursos reales. Los valores,
-réplicas y comportamiento del entorno deben validarse; declararlos en archivos
-no prueba que se apliquen.
+Docker Compose es requisito del proyecto. Se propone usarlo para desplegar y
+reproducir los componentes por VM, sin reemplazar la segmentación entre VMs ni
+la autorización. El control de recursos es requisito; los límites concretos de
+CPU y memoria y su distribución por contenedor deben medirse y validarse. La
+ejecución sin privilegios es una propuesta de endurecimiento. Declarar límites
+en archivos no prueba que se apliquen.
 
 Vagrant y/o Ansible se evaluarán para aprovisionar las máquinas y configurarlas.
 Vagrant para crear VMs y Ansible para configurarlas es una propuesta, no una
@@ -140,7 +145,7 @@ definitiva.
 ```mermaid
 flowchart LR
     subgraph AUTH["vm-auth - autoridad"]
-        AS["auth_server<br/>JWT RS256 / JWKS"]
+        AS["auth_server<br/>autenticación y emisión de tokens<br/>algoritmo / endpoint pendientes"]
     end
 
     subgraph INGEST["vm-ingest - ingesta"]
@@ -188,37 +193,53 @@ flowchart LR
     ANSWERS --> REPLYQ
     REPLYQ -->|"respuesta a la instancia solicitante"| QUERY
 
-    SIM -. "solicita identidad / recibe JWT" .-> AS
-    PROC -. "solicita identidad / recibe JWT" .-> AS
-    ARCH -. "solicita identidad / recibe JWT" .-> AS
-    DASH -. "solicita identidad / recibe JWT" .-> AS
-    ALERT -. "solicita identidad / recibe JWT" .-> AS
-    QUERY -. "solicita identidad / recibe JWT" .-> AS
+    SIM -. "solicitud de token" .-> AS
+    AS -. "JWT firmado (mecanismo pendiente)" .-> SIM
+    PROC -. "solicitud de token" .-> AS
+    AS -. "JWT firmado (mecanismo pendiente)" .-> PROC
+    ARCH -. "solicitud de token" .-> AS
+    AS -. "JWT firmado (mecanismo pendiente)" .-> ARCH
+    DASH -. "solicitud de token" .-> AS
+    AS -. "JWT firmado (mecanismo pendiente)" .-> DASH
+    ALERT -. "solicitud de token" .-> AS
+    AS -. "JWT firmado (mecanismo pendiente)" .-> ALERT
+    QUERY -. "solicitud de token" .-> AS
+    AS -. "JWT firmado (mecanismo pendiente)" .-> QUERY
     KAFKA -. "obtiene claves públicas JWKS" .-> AS
     RMQ -. "obtiene claves públicas JWKS" .-> AS
 ```
 
 ## Requisitos, propuestas y decisiones pendientes
 
-### Requisitos del enunciado compartido
+### Requisitos explícitos del Proyecto 12
 
-- La fuente de datos es aleatoria.
-- Se deben integrar Apache Kafka y RabbitMQ en una arquitectura distribuida
-  orquestada con Docker Compose.
-- La entrega incluye el repositorio y una demostración funcional, con
-  explicación concisa de arquitectura y decisiones de diseño.
+- Arquitectura con cinco máquinas virtuales y siete microservicios.
+- Apache Kafka y Kafka Streams para la mensajería y el procesamiento de
+  eventos.
+- RabbitMQ para distribución de mensajes.
+- Autenticación de los componentes.
+- `nftables` para la configuración de firewall.
+- Programación Orientada a Objetos.
+- PostgreSQL para persistencia.
+- Pruebas.
+- Control de recursos.
+- Generación aleatoria de datos y orquestación con Docker Compose.
+- Entrega del repositorio y demostración funcional, explicando arquitectura y
+  decisiones de diseño.
 
 ### Propuestas del diseño del equipo
 
-- Separar el sistema en cinco VMs con los componentes de la tabla anterior.
-- Implementar siete microservicios Java/Spring Boot y `dashboard.html`.
-- Usar Kafka Streams y una KTable para calcular estado por zona.
-- Distribuir actualizaciones con el fanout `traffic_updates` y usar los nombres
-  de colas indicados en el diagrama como referencia propuesta.
+- Asignar los componentes a zonas como se muestra en la tabla anterior.
+- Implementar los microservicios con Java/Spring Boot y la interfaz
+  `dashboard.html`.
+- Usar una KTable por zona para calcular el estado del tráfico.
+- Distribuir actualizaciones con el fanout `traffic_updates` y las colas
+  propuestas.
 - Responder consultas con `alert_dispatcher`, una réplica local y respuestas
   correlacionadas por instancia.
-- Usar JWT RS256/JWKS, SASL/OAUTHBEARER y ACL en Kafka, OAuth2 en RabbitMQ,
-  credenciales específicas en PostgreSQL, TLS y reglas `nftables`.
+- Usar JWT, RS256/JWKS, SASL/OAUTHBEARER y ACL en Kafka, OAuth2 en RabbitMQ,
+  credenciales específicas en PostgreSQL, TLS y política de denegación por
+  defecto en `nftables`.
 - Evaluar Vagrant y/o Ansible y aplicar límites de recursos por contenedor.
 
 Estas propuestas se mantienen sujetas a aprobación y validación del equipo.
@@ -229,11 +250,14 @@ Estas propuestas se mantienen sujetas a aprobación y validación del equipo.
   keys, incluidos los nombres de las colas de respuesta por instancia.
 - Definir algoritmo, claves, agregaciones, ventanas y umbrales de densidad.
 - Precisar credenciales de servicio, claims, audiencias, scopes, expiración,
-  renovación y permisos de JWT.
+  renovación y permisos de JWT, así como confirmar si RS256, JWKS y el endpoint
+  de tokens son requisitos o elecciones del equipo.
 - Determinar configuración TLS y listeners seguros para Kafka, RabbitMQ,
   PostgreSQL, autenticación, JWKS y dashboard.
 - Acordar direcciones, puertos y sentidos concretos de la matriz de red antes
-  de escribir reglas definitivas.
+  de escribir reglas definitivas; decidir también si son necesarios los flujos
+  condicionales de DNS, NTP, SSH de administración o Internet para
+  aprovisionamiento.
 - Definir esquema, auditoría, retención, copias de seguridad e integridad del
   histórico.
 - Elegir proveedor de virtualización y confirmar compatibilidad con Vagrant,
