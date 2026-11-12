@@ -145,12 +145,45 @@ forced reauthentication. If Héctor enables that setting, add a separate
 expiry/reauthentication case using an Auth Server-issued short-lived token
 before treating expiry behavior as verified.
 
-No broker integration result has been reported. Passing unit tests do not prove
-broker-side JWT validation, ACLs, or forced reauthentication.
+No successful broker integration has been demonstrated. Passing unit tests do
+not prove broker-side JWT validation, ACLs, or forced reauthentication.
+
+## Inter-broker principal claim investigation
+
+Héctor's latest local run reached KRaft startup with the Auth Server/JWKS
+reachable and reported an authentication failure:
+`No principal name in JWT claim: sub`. The raw token and credentials were not
+shared.
+
+The Auth Server's existing client-credentials integration test verifies that
+its issued JWT contains `sub` (the registered client ID), `iss`, and `aud`.
+Strimzi Kafka OAuth 0.18.1 uses `sub` as the default principal claim when
+`oauth.username.claim` is not set. These checks do not prove that the broker's
+inter-broker client used that same token or that its configured login callback
+was applied.
+
+The broker Compose in PR #14 currently configures the client login callback
+globally as `KAFKA_SASL_LOGIN_CALLBACK_HANDLER_CLASS`. Strimzi 0.18.1's broker
+examples configure the OAuth client callback on the `CLIENT` listener and
+`OAUTHBEARER` mechanism using
+`KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_LOGIN_CALLBACK_HANDLER_CLASS`.
+Because inter-broker traffic uses that listener/mechanism, this mismatch is
+the leading configuration cause to verify. The proposed correction belongs
+in Héctor's broker configuration, not this PR: use the listener/mechanism
+callback key and confirm the external `KafkaClient` JAAS entry obtains a token
+for the registered broker client. Keep `sub` as the identity claim and retain
+signature, issuer, audience, TLS, and ACL validation; do not relax OAuth to
+bypass the error.
+
+This diagnosis is still pending a repeat run with the corrected effective
+broker configuration. During that run, verify the broker client identity and
+principal without logging or sharing the token. Do not mark the integration
+successful until inter-broker authentication and an authorized client
+operation both succeed.
 
 ## Latest execution status
 
-Checked on 2026-11-12 at 17:47 local time:
+Checked on 2026-11-12 at 17:58 local time:
 
 - Docker is now available (`docker` 28.5.1, Compose 2.40.3). The earlier check
   at 17:26 failed because the `dockerDesktopLinuxEngine` named pipe was
@@ -162,15 +195,21 @@ Checked on 2026-11-12 at 17:47 local time:
   the integration test source compiled, but tests were intentionally skipped.
 - `mvn -pl shared/kafka-security -Pkafka-it test`: `BUILD SUCCESS`, 5 unit
   tests passed. This does not run the Failsafe integration test.
-- The latest report on PR #14 says the broker exited because its test JWKS
-  endpoint was deliberately set to `https://auth.example.invalid/oauth2/jwks`;
-  the temporary Compose resources were then removed. That endpoint is not a
-  usable Auth Server.
+- Héctor's initial broker attempt exited because its test JWKS endpoint was
+  deliberately set to `https://auth.example.invalid/oauth2/jwks`; the
+  temporary Compose resources were then removed. That endpoint was not usable.
+- Héctor later reported a temporary run where the Auth Server/JWKS responded
+  successfully and issued a token reported to contain `iss`, `aud`, and `sub`.
+  The broker reached KRaft startup but failed during inter-broker/listener
+  authentication with `No principal name in JWT claim: sub`. Temporary
+  resources and secrets were cleaned up. This is a reproduced failure, not a
+  successful authentication test.
 - No reachable broker address, Auth Server token/JWKS URLs, TLS trust material,
   test client credentials, or provisioned test ACLs are available in this
   workspace. No credentials, tokens, or certificates were requested or added.
-- Consequently, no broker connection or token/issuer/audience/ACL/expiry
-  rejection test was executed. There are no end-to-end pass results to report.
+- Consequently, Steven did not execute a broker connection or
+  token/issuer/audience/ACL/expiry rejection test in this workspace. There are
+  no end-to-end pass results to report.
 
 To unblock a reproducible run, Héctor needs to provide the non-secret runtime
 parameters: broker host and TLS client port, certificate host/SAN and the
@@ -178,6 +217,6 @@ local truststore arrangement, Auth Server token and JWKS endpoints plus issuer,
 approved audience, ACL principal mapping/status, token lifetime, and
 `connections.max.reauth.ms`. Test credentials and certificate files must be
 injected locally from a protected source, never posted in the PR or committed.
-The exact service/client identities and issuance of the validly signed
-wrong-issuer/wrong-audience test tokens must also be coordinated before the
-profile can run.
+The exact service/client identities, corrected listener-scoped inter-broker
+callback, and issuance of the validly signed wrong-issuer/wrong-audience test
+tokens must also be coordinated before the profile can run.
