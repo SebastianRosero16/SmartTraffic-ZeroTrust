@@ -1,0 +1,6 @@
+services:
+  kafka:
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: "CLIENT://127.0.0.1:${CLIENT_PORT:?Set CLIENT_PORT in .env}"
+    ports:
+      - "127.0.0.1:${CLIENT_PORT:?Set CLIENT_PORT in .env}:${CLIENT_PORT:?Set CLIENT_PORT in .env}"
