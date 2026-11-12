@@ -139,9 +139,9 @@
 
     h1 {
       margin: 0;
-      font-size: clamp(1.8rem, 4vw, 2.65rem);
+      font-size: 2.65rem;
       font-weight: 650;
-      letter-spacing: -0.045em;
+      letter-spacing: 0;
     }
 
     .hero-copy {
@@ -194,7 +194,7 @@
       margin: 0;
       font-size: 1.75rem;
       font-weight: 650;
-      letter-spacing: -0.04em;
+      letter-spacing: 0;
     }
 
     .summary-note {
@@ -507,7 +507,12 @@
         gap: 17px;
       }
 
+      h1 {
+        font-size: 1.8rem;
+      }
+
       .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 9px;
       }
 
@@ -516,12 +521,24 @@
         padding: 14px 12px;
       }
 
+      .summary-card:last-child {
+        grid-column: 1 / -1;
+      }
+
       .summary-label {
         min-height: 2.2em;
         font-size: 0.72rem;
       }
 
+      .summary-card:last-child .summary-label {
+        min-height: 0;
+      }
+
       .summary-value {
+        display: flex;
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
         font-size: 1.45rem;
       }
 
