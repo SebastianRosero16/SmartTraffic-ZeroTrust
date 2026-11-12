@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101923">
+  <title>SmartTraffic | Panel de demostración</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #101923;
+      color: #eef4f7;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      --surface: #182530;
+      --surface-raised: #1d2c38;
+      --muted: #9cabb7;
+      --border: #2b3c48;
+      --accent: #56dfc0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background:
+        radial-gradient(ellipse at 85% 0%, rgb(33 109 105 / 16%), transparent 34rem),
+        #101923;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page-shell {
+      width: min(1160px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 34px 0 48px;
+    }
+
+    .topbar,
+    .topbar-brand,
+    .topbar-meta,
+    .section-heading,
+    .card-heading,
+    .metric-row,
+    .card-footer,
+    .control-row {
+      display: flex;
+      align-items: center;
+    }
+
+    .topbar,
+    .section-heading,
+    .card-heading,
+    .metric-row,
+    .card-footer {
+      justify-content: space-between;
+    }
+
+    .topbar {
+      gap: 20px;
+      padding-bottom: 30px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .topbar-brand {
+      gap: 13px;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid rgb(86 223 192 / 35%);
+      border-radius: 13px;
+      background: rgb(86 223 192 / 10%);
+      color: var(--accent);
+    }
+
+    .brand-mark svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .eyebrow,
+    .section-kicker {
+      margin: 0 0 5px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 1rem;
+      letter-spacing: 0.01em;
+    }
+
+    .brand-subtitle {
+      color: var(--muted);
+      font-weight: 450;
+    }
+
+    .topbar-meta {
+      gap: 9px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .pulse-dot,
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 4px rgb(86 223 192 / 12%);
+    }
+
+    main {
+      padding-top: 37px;
+    }
+
+    .hero {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 25px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.8rem, 4vw, 2.65rem);
+      font-weight: 650;
+      letter-spacing: -0.045em;
+    }
+
+    .hero-copy {
+      max-width: 620px;
+      margin: 10px 0 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .demo-badge,
+    .state-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgb(86 223 192 / 30%);
+      border-radius: 999px;
+      background: rgb(86 223 192 / 9%);
+      color: #9af0dc;
+      font-size: 0.75rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .demo-badge {
+      padding: 9px 13px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 31px;
+    }
+
+    .summary-card {
+      min-height: 116px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: linear-gradient(145deg, rgb(29 44 56 / 95%), rgb(24 37 48 / 95%));
+    }
+
+    .summary-label {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+
+    .summary-value {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 650;
+      letter-spacing: -0.04em;
+    }
+
+    .summary-note {
+      margin-left: 8px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 450;
+      letter-spacing: 0;
+    }
+
+    .section-heading {
+      gap: 16px;
+      margin-bottom: 15px;
+    }
+
+    .section-heading h2 {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 620;
+    }
+
+    .section-kicker {
+      margin-bottom: 7px;
+      color: var(--accent);
+    }
+
+    .zone-count {
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+
+    .zones-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 15px;
+    }
+
+    .zones-grid[hidden] {
+      display: none;
+    }
+
+    .zone-card {
+      min-width: 0;
+      padding: 19px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--surface);
+      transition: border-color 180ms ease, transform 180ms ease;
+    }
+
+    .zone-card:hover {
+      transform: translateY(-2px);
+      border-color: #47606d;
+    }
+
+    .card-heading {
+      gap: 12px;
+      min-height: 32px;
+    }
+
+    .zone-name {
+      overflow: hidden;
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .state-chip {
+      padding: 6px 9px;
+      border-color: transparent;
+      font-size: 0.68rem;
+      letter-spacing: 0.035em;
+      text-transform: uppercase;
+    }
+
+    .state-chip::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      content: "";
+    }
+
+    .state-clear {
+      background: rgb(83 217 169 / 12%);
+      color: #70e5b7;
+    }
+
+    .state-moderate {
+      background: rgb(242 190 93 / 12%);
+      color: #f3c76e;
+    }
+
+    .state-congested {
+      background: rgb(255 126 116 / 12%);
+      color: #ff9186;
+    }
+
+    .metric-row {
+      gap: 8px;
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+
+    .metric-value {
+      color: #eef4f7;
+      font-size: 1.1rem;
+      font-weight: 620;
+    }
+
+    .density-label {
+      margin: 18px 0 9px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .density-track {
+      height: 7px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #2b3943;
+    }
+
+    .density-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 350ms ease, background-color 350ms ease;
+    }
+
+    .density-fill.state-moderate {
+      background: #f3c76e;
+    }
+
+    .density-fill.state-congested {
+      background: #ff8277;
+    }
+
+    .card-footer {
+      gap: 10px;
+      margin-top: 17px;
+      color: var(--muted);
+      font-size: 0.74rem;
+    }
+
+    .demo-disclaimer {
+      display: flex;
+      align-items: flex-start;
+      gap: 11px;
+      margin-top: 23px;
+      padding: 14px 16px;
+      border: 1px solid #344650;
+      border-radius: 12px;
+      background: rgb(29 44 56 / 60%);
+      color: #bdc9d0;
+      font-size: 0.8rem;
+      line-height: 1.5;
+    }
+
+    .info-icon {
+      display: grid;
+      width: 19px;
+      height: 19px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid #718590;
+      border-radius: 50%;
+      color: #d3dde2;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    .control-panel {
+      margin-top: 30px;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgb(24 37 48 / 70%);
+    }
+
+    .control-row {
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .control-copy strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 0.87rem;
+    }
+
+    .control-copy span {
+      color: var(--muted);
+      font-size: 0.77rem;
+    }
+
+    .button-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .control-button {
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid #405461;
+      border-radius: 9px;
+      background: var(--surface-raised);
+      color: #e7eef2;
+      cursor: pointer;
+      font-size: 0.77rem;
+      font-weight: 600;
+      transition: background-color 150ms ease, border-color 150ms ease;
+    }
+
+    .control-button:hover {
+      border-color: #6a8491;
+      background: #263a47;
+    }
+
+    .control-button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .control-button.primary {
+      border-color: rgb(86 223 192 / 40%);
+      background: rgb(86 223 192 / 12%);
+      color: #a3f1df;
+    }
+
+    .control-button.danger {
+      border-color: rgb(255 126 116 / 35%);
+      color: #ffaaa2;
+    }
+
+    .notice {
+      margin-top: 17px;
+      padding: 17px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #1b2a35;
+      color: #dce5ea;
+      line-height: 1.5;
+    }
+
+    .notice[hidden] {
+      display: none;
+    }
+
+    .notice-title {
+      margin: 0 0 4px;
+      font-weight: 650;
+    }
+
+    .notice-copy {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .notice-error {
+      border-color: rgb(255 126 116 / 35%);
+      background: rgb(111 47 47 / 17%);
+    }
+
+    .notice-empty {
+      border-color: #435663;
+    }
+
+    footer {
+      margin-top: 30px;
+      color: #788995;
+      font-size: 0.75rem;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    @media (max-width: 820px) {
+      .zones-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 600px) {
+      .page-shell {
+        width: min(100% - 28px, 480px);
+        padding-top: 20px;
+      }
+
+      .topbar {
+        padding-bottom: 20px;
+      }
+
+      .topbar-meta {
+        font-size: 0;
+      }
+
+      main {
+        padding-top: 27px;
+      }
+
+      .hero {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 17px;
+      }
+
+      .summary-grid {
+        gap: 9px;
+      }
+
+      .summary-card {
+        min-height: 99px;
+        padding: 14px 12px;
+      }
+
+      .summary-label {
+        min-height: 2.2em;
+        font-size: 0.72rem;
+      }
+
+      .summary-value {
+        font-size: 1.45rem;
+      }
+
+      .summary-note {
+        display: block;
+        margin: 3px 0 0;
+        font-size: 0.68rem;
+      }
+
+      .zones-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .zone-card {
+        padding: 17px;
+      }
+
+      .control-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .button-group {
+        width: 100%;
+      }
+
+      .control-button {
+        flex: 1 1 auto;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="topbar-brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M4 19V9m5 10V5m6 14v-7m5 7V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M2 19h20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div>
+          <p class="eyebrow">Smart city · Proyecto 12</p>
+          <p class="brand-title">SmartTraffic <span class="brand-subtitle">/ Zona Cero</span></p>
+        </div>
+      </div>
+      <div class="topbar-meta" aria-label="Modo de demostración">
+        <span class="pulse-dot" aria-hidden="true"></span>
+        Prototipo visual local
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="page-title">
+        <div>
+          <p class="section-kicker">Centro de monitoreo</p>
+          <h1 id="page-title">Estado del tráfico</h1>
+          <p class="hero-copy">Vista de ejemplo para explorar cómo se podría presentar el nivel de tráfico en distintas zonas.</p>
+        </div>
+        <span class="demo-badge"><span class="live-dot" aria-hidden="true"></span>Datos de demostración</span>
+      </section>
+
+      <section class="summary-grid" aria-label="Resumen de demostración">
+        <article class="summary-card">
+          <p class="summary-label">Zonas de ejemplo</p>
+          <p class="summary-value"><span id="zone-total">0</span><span class="summary-note">áreas simuladas</span></p>
+        </article>
+        <article class="summary-card">
+          <p class="summary-label">Vehículos de ejemplo</p>
+          <p class="summary-value"><span id="vehicle-total">0</span><span class="summary-note">conteo ficticio</span></p>
+        </article>
+        <article class="summary-card">
+          <p class="summary-label">Última actualización local</p>
+          <p class="summary-value"><span id="last-updated">--:--</span><span class="summary-note">hora del navegador</span></p>
+        </article>
+      </section>
+
+      <section aria-labelledby="zones-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Vista por área</p>
+            <h2 id="zones-title">Zonas de tráfico</h2>
+          </div>
+          <span class="zone-count" id="zone-count">Datos ficticios</span>
+        </div>
+
+        <div class="zones-grid" id="zones-grid"></div>
+        <div class="notice notice-empty" id="empty-notice" role="status" hidden>
+          <p class="notice-title">No hay datos de demostración</p>
+          <p class="notice-copy">Esta vista está vacía intencionalmente. Reanuda la simulación local para volver a mostrar las zonas de ejemplo.</p>
+        </div>
+        <div class="notice notice-error" id="error-notice" role="alert" hidden>
+          <p class="notice-title">No se pudo mostrar la información</p>
+          <p class="notice-copy">Estado de error simulado para la demostración. No se realizó ninguna solicitud a servicios externos.</p>
+        </div>
+      </section>
+
+      <aside class="demo-disclaimer">
+        <span class="info-icon" aria-hidden="true">i</span>
+        <span>Esta página es un prototipo local. Estados, cantidades y densidades son ficticios y no representan lecturas reales, umbrales acordados ni datos recibidos de sensores o servicios.</span>
+      </aside>
+
+      <section class="control-panel" aria-label="Controles de demostración">
+        <div class="control-row">
+          <div class="control-copy">
+            <strong id="simulation-status">Simulación local activa</strong>
+            <span>Actualización visual automática; sin conexión a backend, WebSocket ni RabbitMQ.</span>
+          </div>
+          <div class="button-group">
+            <button class="control-button primary" id="toggle-button" type="button">Pausar simulación</button>
+            <button class="control-button" id="empty-button" type="button">Ver estado sin datos</button>
+            <button class="control-button danger" id="error-button" type="button">Probar estado de error</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>SmartTraffic · Prototipo visual de demostración · No conectado a servicios reales</footer>
+  </div>
+
+  <script>
+    "use strict";
+
+    const zoneExamples = [
+      { name: "Centro histórico" },
+      { name: "Avenida principal" },
+      { name: "Zona norte" },
+      { name: "Terminal" },
+      { name: "Zona universitaria" },
+      { name: "Zona sur" }
+    ];
+
+    const stateClasses = {
+      DESPEJADA: "state-clear",
+      MODERADA: "state-moderate",
+      CONGESTIONADA: "state-congested"
+    };
+
+    const stateExamples = [
+      { state: "DESPEJADA", minDensity: 8, maxDensity: 32, minVehicles: 15, maxVehicles: 58 },
+      { state: "MODERADA", minDensity: 35, maxDensity: 67, minVehicles: 55, maxVehicles: 125 },
+      { state: "CONGESTIONADA", minDensity: 70, maxDensity: 96, minVehicles: 120, maxVehicles: 220 }
+    ];
+
+    const grid = document.getElementById("zones-grid");
+    const zoneTotal = document.getElementById("zone-total");
+    const vehicleTotal = document.getElementById("vehicle-total");
+    const lastUpdated = document.getElementById("last-updated");
+    const zoneCount = document.getElementById("zone-count");
+    const simulationStatus = document.getElementById("simulation-status");
+    const toggleButton = document.getElementById("toggle-button");
+    const emptyButton = document.getElementById("empty-button");
+    const errorButton = document.getElementById("error-button");
+    const emptyNotice = document.getElementById("empty-notice");
+    const errorNotice = document.getElementById("error-notice");
+
+    let simulationTimer;
+    let simulationActive = true;
+    let viewState = "data";
+    let simulationTick = 0;
+
+    function formatTime(date) {
+      return new Intl.DateTimeFormat("es-CO", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }).format(date);
+    }
+
+    function createZoneCard(zone) {
+      const card = document.createElement("article");
+      card.className = "zone-card";
+
+      const heading = document.createElement("div");
+      heading.className = "card-heading";
+
+      const name = document.createElement("h3");
+      name.className = "zone-name";
+      name.textContent = zone.name;
+
+      const state = document.createElement("span");
+      state.className = `state-chip ${stateClasses[zone.state]}`;
+      state.textContent = zone.state;
+      heading.append(name, state);
+
+      const vehicleRow = document.createElement("div");
+      vehicleRow.className = "metric-row";
+      const vehicleLabel = document.createElement("span");
+      vehicleLabel.textContent = "Vehículos";
+      const vehicleValue = document.createElement("strong");
+      vehicleValue.className = "metric-value";
+      vehicleValue.textContent = zone.vehicles.toLocaleString("es-CO");
+      vehicleRow.append(vehicleLabel, vehicleValue);
+
+      const densityLabel = document.createElement("p");
+      densityLabel.className = "density-label";
+      densityLabel.textContent = `Densidad simulada · ${zone.density}%`;
+
+      const densityTrack = document.createElement("div");
+      densityTrack.className = "density-track";
+      densityTrack.setAttribute("role", "img");
+      densityTrack.setAttribute("aria-label", `Densidad de demostración: ${zone.density}%`);
+      const densityFill = document.createElement("div");
+      densityFill.className = `density-fill ${stateClasses[zone.state]}`;
+      densityFill.style.width = `${zone.density}%`;
+      densityTrack.append(densityFill);
+
+      const footer = document.createElement("div");
+      footer.className = "card-footer";
+      const source = document.createElement("span");
+      source.textContent = "Muestra ficticia";
+      const updated = document.createElement("span");
+      updated.textContent = "Actualizada localmente";
+      footer.append(source, updated);
+
+      card.append(heading, vehicleRow, densityLabel, densityTrack, footer);
+      return card;
+    }
+
+    function refreshZoneExamples() {
+      if (viewState !== "data") return;
+
+      const zones = zoneExamples.map((zone, index) => {
+        const choice = stateExamples[(index + simulationTick) % stateExamples.length];
+        return {
+          ...zone,
+          state: choice.state,
+          density: Math.floor(Math.random() * (choice.maxDensity - choice.minDensity + 1)) + choice.minDensity,
+          vehicles: Math.floor(Math.random() * (choice.maxVehicles - choice.minVehicles + 1)) + choice.minVehicles
+        };
+      });
+      simulationTick += 1;
+
+      const fragment = document.createDocumentFragment();
+      zones.forEach((zone) => fragment.append(createZoneCard(zone)));
+      grid.replaceChildren(fragment);
+
+      const totalVehicles = zones.reduce((total, zone) => total + zone.vehicles, 0);
+      zoneTotal.textContent = String(zones.length);
+      vehicleTotal.textContent = totalVehicles.toLocaleString("es-CO");
+      lastUpdated.textContent = formatTime(new Date());
+      zoneCount.textContent = `${zones.length} zonas · datos ficticios`;
+      emptyNotice.hidden = true;
+      errorNotice.hidden = true;
+    }
+
+    function setViewState(nextState) {
+      viewState = nextState;
+      grid.hidden = nextState !== "data";
+      emptyNotice.hidden = nextState !== "empty";
+      errorNotice.hidden = nextState !== "error";
+      zoneTotal.textContent = nextState === "data" ? String(zoneExamples.length) : "0";
+      vehicleTotal.textContent = "—";
+      lastUpdated.textContent = "—";
+      zoneCount.textContent = nextState === "data" ? "Datos ficticios" : "Vista de demostración";
+      if (nextState === "data") refreshZoneExamples();
+    }
+
+    function startSimulation() {
+      if (simulationTimer) window.clearInterval(simulationTimer);
+      simulationActive = true;
+      simulationStatus.textContent = "Simulación local activa";
+      toggleButton.textContent = "Pausar simulación";
+      setViewState("data");
+      simulationTimer = window.setInterval(refreshZoneExamples, 5000);
+    }
+
+    function pauseSimulation() {
+      if (simulationTimer) window.clearInterval(simulationTimer);
+      simulationTimer = undefined;
+      simulationActive = false;
+      simulationStatus.textContent = "Simulación local pausada";
+      toggleButton.textContent = "Reanudar simulación";
+    }
+
+    toggleButton.addEventListener("click", () => {
+      if (simulationActive) pauseSimulation();
+      else startSimulation();
+    });
+
+    emptyButton.addEventListener("click", () => {
+      pauseSimulation();
+      setViewState("empty");
+    });
+
+    errorButton.addEventListener("click", () => {
+      pauseSimulation();
+      setViewState("error");
+    });
+
+    refreshZoneExamples();
+    simulationTimer = window.setInterval(refreshZoneExamples, 5000);
+  </script>
+</body>
+</html>
