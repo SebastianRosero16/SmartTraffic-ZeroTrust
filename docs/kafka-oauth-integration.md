@@ -88,26 +88,80 @@ They verify the generated SASL_SSL/OAUTHBEARER producer, consumer, and Streams
 properties; required credentials; HTTPS-only token URLs; optional truststore
 settings; and rejection of malformed JAAS input.
 
-The broker integration suite is still pending. Once the broker, TLS trust
-material, Auth Server, test clients, and ACLs are available, it must demonstrate:
+## Reproducible broker integration profile
 
-- an authorized simulator publish and authorized archiver/Streams consume;
-- rejection when SASL credentials/token are absent or invalid;
-- rejection of an expired token at forced reauthentication;
-- rejection of a token with a wrong issuer or audience;
-- rejection of unauthorized topic/group operations and topic creation;
-- the exact Kafka Streams ACL set required by the agreed topology.
+The `kafka-it` Maven profile runs `KafkaOAuthBrokerIT` with Failsafe. It is
+disabled by default and requires an already-running broker, an accessible Auth
+Server/JWKS, externally injected test credentials, and pre-provisioned ACLs.
+The test never creates topics.
 
-Do not treat passing unit tests as evidence that broker-side JWT validation,
-ACLs, or forced reauthentication work.
+Run it from the repository root after setting the required environment
+variables from a protected local source:
+
+```powershell
+mvn -pl shared/kafka-security -Pkafka-it verify
+```
+
+The authorized producer uses the standard variables from the client
+configuration table above. The integration profile additionally requires:
+
+| Environment variable | Purpose |
+|---|---|
+| `KAFKA_IT_TOPIC` | Existing topic where the authorized producer has `WRITE`; for this approved local test, use `traffic_readings`. |
+| `KAFKA_IT_ACL_DENIED_CLIENT_ID` | Valid OAuth client with the correct issuer and audience but without `WRITE` on `KAFKA_IT_TOPIC`. |
+| `KAFKA_IT_ACL_DENIED_CLIENT_SECRET` | Secret for that ACL-denied test client. |
+| `KAFKA_IT_INVALID_JWT_FILE` | Absolute path to a malformed or untrusted JWT file. |
+| `KAFKA_IT_WRONG_ISSUER_JWT_FILE` | Absolute path to a validly signed token with only the issuer claim incorrect. |
+| `KAFKA_IT_WRONG_AUDIENCE_JWT_FILE` | Absolute path to a validly signed token with only the audience incorrect. |
+
+JWT files are bearer credentials and must be generated for the test environment,
+stored outside the repository, and supplied by absolute path. Do not put
+tokens, passwords, private keys, or certificates in Git, command-line
+arguments, or PR comments. The wrong-issuer and wrong-audience tokens must
+otherwise be validly signed by a key published by the broker-configured JWKS;
+otherwise the test would only prove signature rejection. Use a test-only
+signing key held by the test Auth Server, not a copy of the real Auth Server's
+private key.
+
+The integration test first requires a successful publish, so an unavailable
+broker or incorrect authorized identity fails before the negative cases. It
+then checks that a missing token, invalid JWT, wrong issuer, wrong audience,
+and valid identity without topic `WRITE` each fail with the expected Kafka
+authentication or authorization error. The missing-token case intentionally
+fails the client's OAuth callback before a token can be sent; it verifies that
+no Kafka operation succeeds without a token, not a particular broker log
+message.
+
+The ACL-denied test client must still have any cluster-level permission needed
+to initialize the idempotent producer (`IDEMPOTENT_WRITE`), while having no
+`WRITE` on the test topic. Otherwise a cluster-level denial could mask whether
+the topic ACL is effective.
+
+The profile does not start Docker Compose or Auth Server. It is safe to invoke
+only after those external services, TLS trust material, test identities, topic,
+and ACLs are ready. The current broker definition does not configure
+`connections.max.reauth.ms`; therefore this profile does not claim to verify
+forced reauthentication. If Héctor enables that setting, add a separate
+expiry/reauthentication case using an Auth Server-issued short-lived token
+before treating expiry behavior as verified.
+
+No broker integration result has been reported. Passing unit tests do not prove
+broker-side JWT validation, ACLs, or forced reauthentication.
 
 ## Latest execution status
 
-Checked on 2026-11-12 before attempting the integration run:
+Checked on 2026-11-12 at 17:47 local time:
 
-- The local Docker CLI is installed, but `docker version` cannot connect to
-  the `desktop-linux` engine because the `dockerDesktopLinuxEngine` named pipe
-  is unavailable. The broker could not be started from this workstation.
+- Docker is now available (`docker` 28.5.1, Compose 2.40.3). The earlier check
+  at 17:26 failed because the `dockerDesktopLinuxEngine` named pipe was
+  unavailable; the daemon was activated afterward.
+- `docker ps -a` showed no Kafka container running or available locally.
+- `mvn test`: `BUILD SUCCESS`, 46 tests, 0 failures, 0 errors, 0 skipped.
+- `mvn package`: `BUILD SUCCESS`, 46 tests, 0 failures, 0 errors, 0 skipped.
+- `mvn -pl shared/kafka-security -Pkafka-it -DskipTests test`: `BUILD SUCCESS`;
+  the integration test source compiled, but tests were intentionally skipped.
+- `mvn -pl shared/kafka-security -Pkafka-it test`: `BUILD SUCCESS`, 5 unit
+  tests passed. This does not run the Failsafe integration test.
 - The latest report on PR #14 says the broker exited because its test JWKS
   endpoint was deliberately set to `https://auth.example.invalid/oauth2/jwks`;
   the temporary Compose resources were then removed. That endpoint is not a
@@ -124,5 +178,6 @@ local truststore arrangement, Auth Server token and JWKS endpoints plus issuer,
 approved audience, ACL principal mapping/status, token lifetime, and
 `connections.max.reauth.ms`. Test credentials and certificate files must be
 injected locally from a protected source, never posted in the PR or committed.
-The exact service/client identities and which negative-test identities can be
-issued also need confirmation before the integration test cases can be fixed.
+The exact service/client identities and issuance of the validly signed
+wrong-issuer/wrong-audience test tokens must also be coordinated before the
+profile can run.
