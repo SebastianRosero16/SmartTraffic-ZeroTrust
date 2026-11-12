@@ -13,6 +13,7 @@
         <module>shared/traffic-contracts</module>
         <module>services/traffic-density-processor</module>
         <module>services/traffic-archiver</module>
+        <module>services/traffic-sensor-simulator</module>
     </modules>
 
     <properties>
