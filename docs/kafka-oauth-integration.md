@@ -100,3 +100,29 @@ material, Auth Server, test clients, and ACLs are available, it must demonstrate
 
 Do not treat passing unit tests as evidence that broker-side JWT validation,
 ACLs, or forced reauthentication work.
+
+## Latest execution status
+
+Checked on 2026-11-12 before attempting the integration run:
+
+- The local Docker CLI is installed, but `docker version` cannot connect to
+  the `desktop-linux` engine because the `dockerDesktopLinuxEngine` named pipe
+  is unavailable. The broker could not be started from this workstation.
+- The latest report on PR #14 says the broker exited because its test JWKS
+  endpoint was deliberately set to `https://auth.example.invalid/oauth2/jwks`;
+  the temporary Compose resources were then removed. That endpoint is not a
+  usable Auth Server.
+- No reachable broker address, Auth Server token/JWKS URLs, TLS trust material,
+  test client credentials, or provisioned test ACLs are available in this
+  workspace. No credentials, tokens, or certificates were requested or added.
+- Consequently, no broker connection or token/issuer/audience/ACL/expiry
+  rejection test was executed. There are no end-to-end pass results to report.
+
+To unblock a reproducible run, Héctor needs to provide the non-secret runtime
+parameters: broker host and TLS client port, certificate host/SAN and the
+local truststore arrangement, Auth Server token and JWKS endpoints plus issuer,
+approved audience, ACL principal mapping/status, token lifetime, and
+`connections.max.reauth.ms`. Test credentials and certificate files must be
+injected locally from a protected source, never posted in the PR or committed.
+The exact service/client identities and which negative-test identities can be
+issued also need confirmation before the integration test cases can be fixed.
