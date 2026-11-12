@@ -70,9 +70,9 @@ El sistema contempla siete microservicios y una interfaz web:
 
 ## Seguridad Zero Trust
 
-La arquitectura propone identidades propias para los servicios que se conectan a los brokers y privilegios mínimos por componente. `auth_server` utilizará JWT firmados con RS256 y publicará claves públicas mediante JWKS. Los detalles de claims, audiencias, scopes, permisos y renovación se establecerán y probarán durante la implementación.
+La arquitectura propone identidades propias para los servicios que se conectan a los brokers y privilegios mínimos por componente. `auth_server` utiliza JWT firmados con RS256 y publica claves públicas mediante JWKS. La matriz aprobada para el clúster Kafka local y las decisiones aún pendientes se documentan en la guía de integración; no constituyen aprobación de despliegue.
 
-- **Kafka:** autenticación de clientes mediante SASL/OAUTHBEARER y autorización separada para operaciones sobre topics. La validación del token y la aplicación de ACL son responsabilidades diferentes.
+- **Kafka:** autenticación de clientes mediante SASL/OAUTHBEARER y autorización separada para operaciones sobre topics. La validación del token y la aplicación de ACL son responsabilidades diferentes. La configuración cliente aprobada para el clúster local y sus verificaciones pendientes están en [docs/kafka-oauth-integration.md](docs/kafka-oauth-integration.md).
 - **RabbitMQ:** plugin OAuth2 para autenticar conexiones y autorizar operaciones sobre exchanges y colas.
 - **Comunicaciones:** TLS y reglas `nftables` con denegación por defecto forman parte del diseño. Se deberá comprobar el tráfico de entrada, salida y reenvío, incluido el que atraviesa redes Docker.
 
@@ -195,7 +195,7 @@ Las responsabilidades son iniciales y no reemplazan la revisión cruzada: el equ
 
 ## Estado y etapas previstas
 
-El proyecto se encuentra en fase inicial. El repositorio contiene el README y `.gitignore`; los microservicios, la infraestructura y las pruebas aún no se han implementado ni validado.
+La integración de seguridad cliente para Kafka está en implementación inicial y cuenta con pruebas unitarias aisladas. Los adaptadores de los servicios, la configuración del broker y las pruebas end-to-end aún no se han implementado ni validado.
 
 Etapas previstas:
 
