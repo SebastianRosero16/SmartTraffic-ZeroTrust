@@ -22,6 +22,21 @@
 # Maven build output
 target/
 
+# Local authentication secrets
+services/auth-server/.secrets/
+services/auth-server/*.pem
+services/auth-server/**/*.pem
+services/auth-server/*.key
+services/auth-server/**/*.key
+services/auth-server/*.p12
+services/auth-server/**/*.p12
+services/auth-server/*.pfx
+services/auth-server/**/*.pfx
+services/auth-server/*.jks
+services/auth-server/**/*.jks
+services/auth-server/.env
+services/auth-server/**/.env
+
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
