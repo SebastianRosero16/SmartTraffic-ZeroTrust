@@ -33,7 +33,7 @@ services:
       KAFKA_PRINCIPAL_BUILDER_CLASS: "io.strimzi.kafka.oauth.server.OAuthKafkaPrincipalBuilder"
       KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: "OAUTHBEARER"
       KAFKA_SASL_LOGIN_CALLBACK_HANDLER_CLASS: "io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"
-      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/secrets/kafka-client-jaas.conf"
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/tmp/kafka-client-jaas.conf"
       KAFKA_AUTHORIZER_CLASS_NAME: "org.apache.kafka.metadata.authorizer.StandardAuthorizer"
       KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
       KAFKA_SUPER_USERS: "${KAFKA_SUPER_USERS:?Set approved KAFKA_SUPER_USERS in .env}"
@@ -60,7 +60,7 @@ services:
         read_only: true
       - type: bind
         source: "${KAFKA_CLIENT_JAAS_FILE:?Set KAFKA_CLIENT_JAAS_FILE in .env}"
-        target: /etc/kafka/secrets/kafka-client-jaas.conf
+        target: /tmp/kafka-client-jaas.conf
         read_only: true
     networks:
       - vm-data-private

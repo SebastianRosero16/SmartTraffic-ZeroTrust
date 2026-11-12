@@ -25,6 +25,7 @@ FROM apache/kafka:4.4.0@sha256:833b867a9585a141da455dc2b57431c65cbccb27f11c91f69
 
 USER root
 RUN mkdir -p /var/lib/kafka/data /opt/kafka/strimzi-oauth \
+    /etc/kafka/secrets \
     && chown -R appuser:appuser /var/lib/kafka/data /opt/kafka/strimzi-oauth
 COPY --from=oauth-dependencies /out/libs/ /opt/kafka/libs/
 COPY --from=oauth-dependencies /out/dependency-tree.txt /opt/kafka/strimzi-oauth/dependency-tree.txt
