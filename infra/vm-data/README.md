@@ -23,24 +23,29 @@ not enabled or packaged in this cut.
 - A local `.env` copied from `.env.example` and filled with approved test
   values. Compose intentionally refuses to start while required values are
   blank.
-- TLS keystore/truststore files and their credential files placed outside Git
-  under the directory selected by `TLS_SECRETS_DIR`. Do not commit credentials
-  or certificates.
-- An external `KafkaClient` JAAS file, selected by `KAFKA_CLIENT_JAAS_FILE`,
-  containing the broker's OAuth client-credentials configuration for
-  inter-broker communication. It must not be committed.
+- TLS keystore/truststore files placed outside Git under the directory selected
+  by `TLS_SECRETS_DIR`, with their passwords supplied only through the local
+  environment. Do not commit credentials or certificates.
+- External values for the listener-scoped OAuth client ID, secret, and token
+  endpoint. They are supplied through the local environment and must not be
+  committed.
 - An Auth Server reachable at `OAUTH_JWKS_ENDPOINT`, with the configured
-  issuer matching `OAUTH_ISSUER_URI`, and an approved Kafka audience in
-  `OAUTH_KAFKA_AUDIENCE`.
+  issuer matching `OAUTH_ISSUER_URI`, a broker client ID in
+  `OAUTH_KAFKA_CLIENT_ID`, and an approved Kafka audience in
+  `OAUTH_KAFKA_AUDIENCE`. The broker client ID is the OAuth resource-server
+  client used for audience validation; the inter-broker client credentials use
+  `OAUTH_KAFKA_CLIENT_ID`, `OAUTH_KAFKA_CLIENT_SECRET`, and
+  `OAUTH_TOKEN_ENDPOINT`.
 
 The Compose file does not publish ports by default. Its client listener uses
 `SASL_SSL` with `OAUTHBEARER`; the KRaft controller listener uses `SSL`.
-The controller listener binds only to container loopback. The broker
+The controller listener binds only to container loopback and requires mutual
+TLS. The broker
 authorizer denies operations without a matching ACL. Listener and
-controller ports, the JWKS endpoint, issuer, Kafka audience, TLS file
-names/types, inter-broker JAAS file, and superuser principal must be supplied
-locally, including the TLS client-auth mode. No credentials, certificates,
-ports, or JWKS host are committed as defaults.
+controller ports, the JWKS endpoint, issuer, broker client ID, Kafka audience,
+TLS file names/types, passwords, and superuser principal must be
+supplied locally, including the TLS client-auth mode. No credentials,
+certificates, ports, or JWKS host are committed as defaults.
 
 The named `vm-data-private` bridge network is not exposed to the host. It is
 not marked `internal: true`, because the broker must be able to initiate an
@@ -124,3 +129,21 @@ docker run --rm --workdir /opt/kafka/libs `
   smarttraffic/kafka-oauth:4.4.0-oauth-0.18.1 `
   --check /opt/kafka/strimzi-oauth/SHA256SUMS
 ```
+
+## Validation evidence
+
+The local validation completed on 2026-11-12 with Docker Desktop and an
+external HTTPS Auth Server/JWKS:
+
+- `docker compose config` completed successfully.
+- Kafka reached `healthy` in KRaft mode.
+- The broker loaded the JWKS keys successfully.
+- The inter-broker OAuth login obtained a token for the configured broker
+  client principal.
+- The controller listener used TLS with mutual authentication and remained
+  private; no host ports were published.
+
+This evidence does not cover client authentication or ACL behavior. The
+`kafka-it` profile must still be run with Steven's approved client matrix.
+The result is not considered end-to-end OAuth validation until that test
+covers the allowed and rejected client cases.
