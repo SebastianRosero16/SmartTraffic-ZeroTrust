@@ -61,6 +61,28 @@ class KafkaOAuthClientConfigurationTest {
     }
 
     @Test
+    void authServerTrustStoreIsSeparateFromKafkaBrokerTrustStore() {
+        Map<String, String> environment = environment();
+        environment.put("KAFKA_SSL_TRUSTSTORE_LOCATION", "/secrets/kafka-truststore.p12");
+        environment.put("KAFKA_SSL_TRUSTSTORE_PASSWORD", "<kafka-truststore-password>");
+        environment.put("KAFKA_SSL_TRUSTSTORE_TYPE", "PKCS12");
+        environment.put("AUTH_SSL_TRUSTSTORE_LOCATION", "/secrets/auth-ca-truststore.p12");
+        environment.put("AUTH_SSL_TRUSTSTORE_PASSWORD", "<auth-truststore-password>");
+        environment.put("AUTH_SSL_TRUSTSTORE_TYPE", "PKCS12");
+
+        Properties properties = KafkaOAuthClientConfiguration.fromEnvironment(environment).producerProperties();
+        String jaas = (String) properties.get("sasl.jaas.config");
+
+        assertEquals("/secrets/kafka-truststore.p12", properties.get("ssl.truststore.location"));
+        assertEquals("<kafka-truststore-password>", properties.get("ssl.truststore.password"));
+        assertTrue(jaas.contains("oauth.ssl.truststore.location=\"/secrets/auth-ca-truststore.p12\""));
+        assertTrue(jaas.contains("oauth.ssl.truststore.password=\"<auth-truststore-password>\""));
+        assertTrue(jaas.contains("oauth.ssl.truststore.type=\"PKCS12\""));
+        assertFalse(jaas.contains("/secrets/kafka-truststore.p12"));
+        assertFalse(jaas.contains("<kafka-truststore-password>"));
+    }
+
+    @Test
     void rejectsMissingCredentialsAndInsecureTokenEndpoint() {
         Map<String, String> missingSecret = environment();
         missingSecret.remove("KAFKA_OAUTH_CLIENT_SECRET");
@@ -92,6 +114,20 @@ class KafkaOAuthClientConfigurationTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> KafkaOAuthClientConfiguration.fromEnvironment(orphanPassword));
+
+        Map<String, String> orphanAuthTrustStorePassword = environment();
+        orphanAuthTrustStorePassword.put("AUTH_SSL_TRUSTSTORE_PASSWORD", "<auth-truststore-password>");
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> KafkaOAuthClientConfiguration.fromEnvironment(orphanAuthTrustStorePassword));
+
+        Map<String, String> orphanAuthTrustStoreType = environment();
+        orphanAuthTrustStoreType.put("AUTH_SSL_TRUSTSTORE_TYPE", "PKCS12");
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> KafkaOAuthClientConfiguration.fromEnvironment(orphanAuthTrustStoreType));
     }
 
     private static KafkaOAuthClientConfiguration configuration() {

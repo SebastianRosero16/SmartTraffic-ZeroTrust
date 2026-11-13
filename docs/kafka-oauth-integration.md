@@ -20,9 +20,24 @@ them to Git.
 | `KAFKA_OAUTH_CLIENT_ID` | Yes | The service-specific OAuth client registered in Auth Server. |
 | `KAFKA_OAUTH_CLIENT_SECRET` | Yes | Secret injected at runtime from a secret manager or protected environment. |
 | `KAFKA_OAUTH_SCOPE` | No | Optional token scope. Kafka ACLs, not scopes, authorize Kafka operations. |
-| `KAFKA_SSL_TRUSTSTORE_LOCATION` | No | External truststore path when the broker certificate is not trusted by the JVM defaults. |
-| `KAFKA_SSL_TRUSTSTORE_PASSWORD` | No | External truststore password; only valid when a truststore path is supplied. |
-| `KAFKA_SSL_TRUSTSTORE_TYPE` | No | Truststore type, for example `PKCS12`. |
+| `KAFKA_SSL_TRUSTSTORE_LOCATION` | No | External truststore path for Kafka broker TLS when the broker certificate is not trusted by JVM defaults. |
+| `KAFKA_SSL_TRUSTSTORE_PASSWORD` | No | Kafka broker truststore password; only valid when its path is supplied. |
+| `KAFKA_SSL_TRUSTSTORE_TYPE` | No | Kafka broker truststore type, for example `PKCS12`. |
+| `AUTH_SSL_TRUSTSTORE_LOCATION` | No | External truststore path for HTTPS connections from the Strimzi OAuth callback to the Auth Server. |
+| `AUTH_SSL_TRUSTSTORE_PASSWORD` | No | Auth Server HTTPS truststore password, when required by its format; only valid when its path is supplied. |
+| `AUTH_SSL_TRUSTSTORE_TYPE` | No | Auth Server HTTPS truststore type, for example `PKCS12`, `JKS`, or `PEM`. |
+
+These truststores protect two different TLS connections. `KAFKA_SSL_TRUSTSTORE_*`
+is passed to Kafka's top-level `ssl.truststore.*` properties and validates the
+Kafka broker certificate. `AUTH_SSL_TRUSTSTORE_*` is passed to Strimzi's OAuth
+JAAS options as `oauth.ssl.truststore.*` and validates the HTTPS certificate
+presented by the token endpoint. The Auth Server truststore is optional when
+the JVM already trusts that certificate. For a private CA, mount its truststore
+file into the client container/host and inject its path (and, if needed,
+password/type) through the environment; do not commit the file or its password.
+No certificate verification or hostname checking is disabled.
+Supplying the Auth Server truststore password or type without its location is
+rejected.
 
 Each application authenticates to the HTTPS token endpoint using its own
 registered client ID and secret; the simulator, processor, and archiver must
@@ -113,7 +128,11 @@ mvn -pl shared/kafka-security -Pkafka-it verify
 ```
 
 The authorized producer uses the standard variables from the client
-configuration table above. The integration profile additionally requires:
+configuration table above. If the Auth Server uses a private CA, provide
+`AUTH_SSL_TRUSTSTORE_LOCATION` (and its password/type where applicable) to
+that client. This truststore is distinct from the optional
+`KAFKA_SSL_TRUSTSTORE_*` settings used to validate the broker. The integration
+profile additionally requires:
 
 | Environment variable | Purpose |
 |---|---|
@@ -154,7 +173,11 @@ the reported `connections.max.reauth.ms=0`, the broker currently does not
 force it. Add a separate expiry case with an Auth Server-issued short-lived
 token after the broker is configured to require reauthentication.
 
-No successful client-side `kafka-it` integration has been demonstrated.
+Héctor reported a successful local `kafka-it` run (5 unit tests and 1
+integration test) with a healthy broker and accessible Auth Server/JWKS. His
+run used an Auth Server HTTPS truststore supplied through a local client
+configuration. That report predates the truststore support now added here and
+does not independently verify this branch's environment-to-JAAS mapping.
 Passing unit tests do not prove client authentication, ACLs, or forced
 reauthentication against the broker.
 
@@ -199,6 +222,12 @@ Checked on 2026-11-12 at 19:50 local time:
   this compiled the profile configuration but intentionally skipped tests.
 - `mvn -pl shared/kafka-security -Pkafka-it test`: `BUILD SUCCESS`, 5 unit
   tests passed. This does not run the Failsafe integration test.
+- After adding the separate Auth Server HTTPS truststore settings,
+  `mvn -pl shared/kafka-security test`: `BUILD SUCCESS`, 6 tests passed,
+  including the truststore-separation and incomplete-configuration checks.
+- After that change, `mvn -pl shared/kafka-security -Pkafka-it -DskipTests
+  test`: `BUILD SUCCESS`; the profile configuration and integration test
+  sources compiled, but tests were skipped.
 - Héctor's initial broker attempt exited because its test JWKS endpoint was
   deliberately set to `https://auth.example.invalid/oauth2/jwks`; the
   temporary Compose resources were then removed. That endpoint was not usable.
@@ -225,11 +254,21 @@ Checked on 2026-11-12 at 19:50 local time:
 - Héctor reported `connections.max.reauth.ms=0`. Forced reauthentication on
   token expiry is disabled and remains explicitly pending; no expiry
   reauthentication test has been run.
+- This branch now accepts `AUTH_SSL_TRUSTSTORE_LOCATION`,
+  `AUTH_SSL_TRUSTSTORE_PASSWORD`, and `AUTH_SSL_TRUSTSTORE_TYPE`, mapping them
+  to Strimzi's `oauth.ssl.truststore.*` JAAS options. A focused unit test
+  verifies that these remain separate from Kafka's `ssl.truststore.*`
+  properties and that Auth Server truststore credentials are not placed in
+  the broker truststore settings.
+- Héctor's reported 5-unit/1-integration-test pass used an external OAuth
+  HTTPS truststore on his local setup. It has not been rerun against this
+  branch's new configuration from Steven's workspace.
 - No reachable broker address, Auth Server token/JWKS URLs, TLS trust material,
   test client credentials, or provisioned test ACLs are available in this
   workspace. No credentials, tokens, or certificates were requested or added.
-- Consequently, Steven did not execute the profile from this machine, and no
-  authorized-client or rejection results for `kafka-it` are available yet.
+- Consequently, Steven cannot independently rerun the profile from this
+  machine. The current commit's authorized-client and rejection results still
+  require a run in Héctor's broker/Auth Server environment.
 
 To unblock a reproducible run, Héctor needs to provide the non-secret runtime
 parameters: broker host and TLS client port, certificate host/SAN and the

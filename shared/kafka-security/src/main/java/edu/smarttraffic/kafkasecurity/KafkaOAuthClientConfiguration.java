@@ -20,6 +20,9 @@ public final class KafkaOAuthClientConfiguration {
     private final String trustStoreLocation;
     private final String trustStorePassword;
     private final String trustStoreType;
+    private final String authTrustStoreLocation;
+    private final String authTrustStorePassword;
+    private final String authTrustStoreType;
 
     private KafkaOAuthClientConfiguration(Map<String, String> environment) {
         Objects.requireNonNull(environment, "Environment is required");
@@ -31,15 +34,27 @@ public final class KafkaOAuthClientConfiguration {
         trustStoreLocation = optional(environment, "KAFKA_SSL_TRUSTSTORE_LOCATION");
         trustStorePassword = optional(environment, "KAFKA_SSL_TRUSTSTORE_PASSWORD");
         trustStoreType = optional(environment, "KAFKA_SSL_TRUSTSTORE_TYPE");
+        authTrustStoreLocation = optional(environment, "AUTH_SSL_TRUSTSTORE_LOCATION");
+        authTrustStorePassword = optional(environment, "AUTH_SSL_TRUSTSTORE_PASSWORD");
+        authTrustStoreType = optional(environment, "AUTH_SSL_TRUSTSTORE_TYPE");
 
         validateJaasValue(clientId, "KAFKA_OAUTH_CLIENT_ID");
         validateJaasValue(clientSecret, "KAFKA_OAUTH_CLIENT_SECRET");
         validateJaasValue(scope, "KAFKA_OAUTH_SCOPE");
         validateJaasValue(tokenEndpoint.toString(), "AUTH_TOKEN_ENDPOINT_URI");
+        validateJaasValue(authTrustStoreLocation, "AUTH_SSL_TRUSTSTORE_LOCATION");
+        validateJaasValue(authTrustStorePassword, "AUTH_SSL_TRUSTSTORE_PASSWORD");
+        validateJaasValue(authTrustStoreType, "AUTH_SSL_TRUSTSTORE_TYPE");
 
         if (trustStoreLocation.isEmpty() && !trustStorePassword.isEmpty()) {
             throw new IllegalArgumentException(
                     "KAFKA_SSL_TRUSTSTORE_PASSWORD requires KAFKA_SSL_TRUSTSTORE_LOCATION");
+        }
+        if (authTrustStoreLocation.isEmpty()
+                && (!authTrustStorePassword.isEmpty() || !authTrustStoreType.isEmpty())) {
+            throw new IllegalArgumentException(
+                    "AUTH_SSL_TRUSTSTORE_PASSWORD and AUTH_SSL_TRUSTSTORE_TYPE require "
+                            + "AUTH_SSL_TRUSTSTORE_LOCATION");
         }
     }
 
@@ -102,7 +117,20 @@ public final class KafkaOAuthClientConfiguration {
         if (!scope.isEmpty()) {
             configuration.append(" oauth.scope=\"").append(escapeJaas(scope)).append('"');
         }
+        appendJaasOption(configuration, "oauth.ssl.truststore.location", authTrustStoreLocation);
+        appendJaasOption(configuration, "oauth.ssl.truststore.password", authTrustStorePassword);
+        appendJaasOption(configuration, "oauth.ssl.truststore.type", authTrustStoreType);
         return configuration.append(';').toString();
+    }
+
+    private static void appendJaasOption(StringBuilder configuration, String option, String value) {
+        if (!value.isEmpty()) {
+            configuration.append(' ')
+                    .append(option)
+                    .append("=\"")
+                    .append(escapeJaas(value))
+                    .append('"');
+        }
     }
 
     private static URI httpsUri(String value) {
