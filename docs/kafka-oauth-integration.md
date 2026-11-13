@@ -142,6 +142,11 @@ profile additionally requires:
 | `KAFKA_IT_INVALID_JWT_FILE` | Absolute path to a malformed or untrusted JWT file. |
 | `KAFKA_IT_WRONG_ISSUER_JWT_FILE` | Absolute path to a validly signed token with only the issuer claim incorrect. |
 | `KAFKA_IT_WRONG_AUDIENCE_JWT_FILE` | Absolute path to a validly signed token with only the audience incorrect. |
+| `KAFKA_IT_REAUTH_WAIT_MS` | Temporary wait covering the configured token TTL and refresh window. |
+| `KAFKA_IT_REAUTH_MARKER_FILE` | Temporary marker path that arms token rejection after the initial publish. |
+| `KAFKA_IT_TOKEN_AUDIT_FILE` | Temporary path for sanitized token-request audit records. |
+| `KAFKA_IT_ADMIN_CLIENT_ID` | Administrative OAuth client used only to verify topic contents. |
+| `KAFKA_IT_ADMIN_CLIENT_SECRET` | Secret for the administrative verification client, injected locally. |
 
 JWT files are bearer credentials and must be generated for the test environment,
 stored outside the repository, and supplied by absolute path. Do not put
@@ -180,6 +185,19 @@ configuration. That report predates the truststore support now added here and
 does not independently verify this branch's environment-to-JAAS mapping.
 Passing unit tests do not prove client authentication, ACLs, or forced
 reauthentication against the broker.
+
+The temporary negative reauthentication case uses the real Strimzi OAuth
+callback. After the initial publish, the Auth Server's opt-in test endpoint
+filter returns HTTP 401 only for the configured application client once the
+marker exists; interbroker requests remain enabled. The filter records only a
+counter, timestamp, client ID, and HTTP status. The test allows Kafka's normal
+reconnection attempts, then requires a failed reauthentication, a failed
+post-expiry publish, and absence of the unique value when read with an
+independent administrative consumer. Configure the filter through
+`smarttraffic.auth.test.audit-path`,
+`smarttraffic.auth.test.rejection-marker-path`, and
+`smarttraffic.auth.test.rejected-client-id` only in an isolated test
+environment; these properties are unset by default.
 
 ## JWT access-token type investigation
 

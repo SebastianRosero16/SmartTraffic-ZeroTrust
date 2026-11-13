@@ -17,6 +17,7 @@ public class AuthServerProperties {
     private String keyId = "smarttraffic-local";
     private Path privateKeyPath;
     private Path publicKeyPath;
+    private TestEndpoint test = new TestEndpoint();
     private Map<String, Client> clients = new LinkedHashMap<>();
 
     public String getIssuer() {
@@ -59,6 +60,14 @@ public class AuthServerProperties {
         this.publicKeyPath = publicKeyPath;
     }
 
+    public TestEndpoint getTest() {
+        return test;
+    }
+
+    public void setTest(TestEndpoint test) {
+        this.test = test == null ? new TestEndpoint() : test;
+    }
+
     public Map<String, Client> getClients() {
         return clients;
     }
@@ -94,6 +103,36 @@ public class AuthServerProperties {
 
         public void setAudiences(List<String> audiences) {
             this.audiences = audiences == null ? new ArrayList<>() : new ArrayList<>(audiences);
+        }
+    }
+
+    public static class TestEndpoint {
+        private Path auditPath;
+        private Path rejectionMarkerPath;
+        private String rejectedClientId;
+
+        public Path getAuditPath() {
+            return auditPath;
+        }
+
+        public void setAuditPath(Path auditPath) {
+            this.auditPath = auditPath;
+        }
+
+        public Path getRejectionMarkerPath() {
+            return rejectionMarkerPath;
+        }
+
+        public void setRejectionMarkerPath(Path rejectionMarkerPath) {
+            this.rejectionMarkerPath = rejectionMarkerPath;
+        }
+
+        public String getRejectedClientId() {
+            return rejectedClientId;
+        }
+
+        public void setRejectedClientId(String rejectedClientId) {
+            this.rejectedClientId = rejectedClientId;
         }
     }
 }
