@@ -38,11 +38,12 @@ The optional `smarttraffic.auth.test.audit-path`,
 `smarttraffic.auth.test.rejection-marker-path`, and
 `smarttraffic.auth.test.rejected-client-id` properties are only for an isolated
 integration-test Auth Server. When enabled, the token endpoint writes a
-sanitized audit record containing request sequence, timestamp, client ID,
-HTTP status, and the issued token's `iat`/`exp` claims. It never writes the
-JWT, response body, or client secret. Once the marker file exists, only the
-configured test client receives HTTP 401; other clients, including the
-interbroker identity, continue through normal authorization.
+sanitized audit record containing a UUID request ID, timestamp, client ID,
+HTTP status, whether rejection was armed when the request arrived, whether the
+marker was applied to that client, and the issued token's `iat`/`exp` claims.
+It never writes the JWT, response body, or client secret. Once the marker file
+exists, only the configured test client receives HTTP 401; other clients,
+including the interbroker identity, continue through normal authorization.
 
 Use unique marker and audit paths outside Git for every run, shared between
 the Auth Server and `kafka-it`, and preserve them for review. These settings

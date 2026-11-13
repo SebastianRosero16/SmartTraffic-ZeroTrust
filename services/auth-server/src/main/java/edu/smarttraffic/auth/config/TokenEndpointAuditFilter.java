@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.UUID;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,7 +22,6 @@ final class TokenEndpointAuditFilter extends OncePerRequestFilter {
     private final Path auditPath;
     private final Path rejectionMarkerPath;
     private final String rejectedClientId;
-    private int requestCount;
 
     TokenEndpointAuditFilter(AuthServerProperties.TestEndpoint properties) {
         auditPath = properties.getAuditPath();
@@ -39,20 +39,28 @@ final class TokenEndpointAuditFilter extends OncePerRequestFilter {
             return;
         }
 
+        String requestId = UUID.randomUUID().toString();
         String clientId = clientId(request);
-        boolean reject = rejectionMarkerPath != null
-                && Files.exists(rejectionMarkerPath)
+        boolean rejectionArmed = rejectionMarkerPath != null
+                && Files.exists(rejectionMarkerPath);
+        boolean rejectionApplied = rejectionArmed
                 && rejectedClientId != null
                 && rejectedClientId.equals(clientId);
         ContentCachingResponseWrapper cachedResponse = new ContentCachingResponseWrapper(response);
         try {
-            if (reject) {
+            if (rejectionApplied) {
                 cachedResponse.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             } else {
                 filterChain.doFilter(request, cachedResponse);
             }
             TokenTimes tokenTimes = tokenTimes(cachedResponse);
-            record(clientId, cachedResponse.getStatus(), tokenTimes);
+            record(
+                    requestId,
+                    clientId,
+                    cachedResponse.getStatus(),
+                    rejectionArmed,
+                    rejectionApplied,
+                    tokenTimes);
         } finally {
             cachedResponse.copyBodyToResponse();
         }
@@ -81,9 +89,13 @@ final class TokenEndpointAuditFilter extends OncePerRequestFilter {
         return new TokenTimes(issuedAt.longValue(), expiresAt.longValue());
     }
 
-    private synchronized void record(String clientId, int status, TokenTimes tokenTimes)
-            throws IOException {
-        int count = ++requestCount;
+    private synchronized void record(
+            String requestId,
+            String clientId,
+            int status,
+            boolean rejectionArmed,
+            boolean rejectionApplied,
+            TokenTimes tokenTimes) throws IOException {
         Path parent = auditPath.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
@@ -92,10 +104,12 @@ final class TokenEndpointAuditFilter extends OncePerRequestFilter {
                 ? clientId
                 : "<missing-or-invalid>";
         StringBuilder line = new StringBuilder()
-                .append("sequence=").append(count)
+                .append("requestId=").append(requestId)
                 .append('\t').append("time=").append(Instant.now())
                 .append('\t').append("clientId=").append(safeClientId)
-                .append('\t').append("status=").append(status);
+                .append('\t').append("status=").append(status)
+                .append('\t').append("rejectionArmed=").append(rejectionArmed)
+                .append('\t').append("rejectionApplied=").append(rejectionApplied);
         if (tokenTimes != null) {
             line.append('\t').append("iatEpochSeconds=").append(tokenTimes.issuedAtEpochSeconds())
                     .append('\t').append("expEpochSeconds=").append(tokenTimes.expiresAtEpochSeconds());

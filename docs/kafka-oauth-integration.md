@@ -208,31 +208,40 @@ return 401, while interbroker and administrative identities are not rejected.
 The test records token `iat` and `exp` from the locally issued JWT without
 writing the JWT or response body. It derives the signal deadline from the
 observed expiry and configured effective reauthentication interval, caps each
-case at six minutes, and never waits past 60 seconds after `exp`. Polling uses
-`System.nanoTime()` and bounded intervals, not a fixed sleep. It logs the
-effective timeout and monotonic elapsed time. Failsafe kills a stuck test
-process after 900 seconds.
+case at six minutes, and allows observation through `exp` plus 60 seconds.
+Polling uses `System.nanoTime()` and bounded intervals, not a fixed sleep. It
+logs the scheduled reauthentication time, effective deadline, and monotonic
+elapsed time. Failsafe kills a stuck test process after 900 seconds.
+
+Each token audit entry has a UUID request ID and records `rejectionArmed` and
+`rejectionApplied` as observed when that request enters the test filter. The
+test snapshots request IDs before each control publish or marker activation
+and correlates only previously unseen IDs; it does not depend on a process-local
+counter, so an Auth Server restart cannot make a new event look old. A request
+that began before the marker but completed afterward remains distinguishable
+from one processed with rejection armed.
 
 Set `KAFKA_IT_RUN_ID` to a new identifier and retain the complete run
 directory, including the Auth Server token audit, rejection marker, and
 case-specific TSV audits, as well as the unique Failsafe XML and redirected
 test log under the operating-system temporary directory, until Héctor reviews
-them. The Auth Server audit includes only sequence, timestamp,
-client ID, status, and token `iat`/`exp`; it never includes a JWT, response
-body, or secret. The test refuses to delete or overwrite prior audit files or
-markers. No reauthentication result is claimed until Héctor runs this exact
-PR head once and reviews the preserved evidence.
+them. The Auth Server audit includes only request ID, timestamp, client ID,
+status, rejection-marker state, and token `iat`/`exp`; it never includes a JWT,
+response body, or secret. The test refuses to delete or overwrite prior audit
+files or markers. No reauthentication result is claimed until Héctor runs this
+exact PR head once and reviews the preserved evidence.
 
 Local validation of this test update:
 
-- `mvn -pl services/auth-server clean test`: 10 tests passed, including two
-  focused tests for sanitized token auditing and marker-triggered HTTP 401.
-- `mvn -pl shared/kafka-security clean test`: 6 unit tests passed.
+- `mvn -pl services/auth-server clean test`: 12 tests passed, including
+  focused checks for unique request IDs and marker state in sanitized audits.
+- `mvn -pl shared/kafka-security clean test`: 11 unit tests passed, including
+  audit-ID correlation and expiry/deadline bounds.
 - `mvn -pl shared/kafka-security -Pkafka-it -DskipTests test`: `BUILD
-  SUCCESS`; the profile's test sources compile, but broker tests were skipped.
-- The `kafka-it` profile was not run here. The exact updated PR head still
-  requires Héctor's single agreed run; no success or rejection result is
-  claimed for token-expiry reauthentication.
+  SUCCESS`; tests were skipped, so no broker integration ran. The preceding
+  unit-test build compiled the integration test sources.
+- Héctor's next agreed broker run remains pending. No success or rejection
+  result is claimed for token-expiry reauthentication.
 
 ## JWT access-token type investigation
 

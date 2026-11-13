@@ -1,11 +1,19 @@
 package edu.smarttraffic.kafkasecurity;
 
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.EXPECTED_REAUTH_INTERVAL_MS;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.MAX_CASE_WAIT_MS;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.eventsSince;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.forRenewal;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.newCaseLimit;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.requestIds;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.ReauthDeadline;
+import edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.TokenAuditEvent;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -13,12 +21,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -35,9 +42,9 @@ import org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -48,10 +55,6 @@ class KafkaOAuthBrokerIT {
     private static final String PRODUCER_CLIENT_SECRET = "KAFKA_OAUTH_CLIENT_SECRET";
     private static final String SUCCESSFUL_REAUTH_METRIC = "successful-reauthentication-total";
     private static final String FAILED_REAUTH_METRIC = "failed-reauthentication-total";
-    private static final long EXPECTED_TOKEN_TTL_SECONDS = 300;
-    private static final long EXPECTED_REAUTH_INTERVAL_MS = 240_000;
-    private static final long MAX_CASE_WAIT_MS = Duration.ofMinutes(6).toMillis();
-    private static final long POST_EXPIRY_GRACE_MS = Duration.ofSeconds(60).toMillis();
     private static final long POLL_INTERVAL_MS = 250;
     private static final long CONTROL_REQUEST_TIMEOUT_MS = Duration.ofSeconds(20).toMillis();
     private static final long SEND_TIMEOUT_MS = Duration.ofSeconds(20).toMillis();
@@ -112,12 +115,13 @@ class KafkaOAuthBrokerIT {
         String topic = required(environment, "KAFKA_IT_TOPIC");
         String clientId = required(environment, PRODUCER_CLIENT_ID);
         long caseStartNanos = System.nanoTime();
-        ReauthDeadline caseLimit = ReauthDeadline.caseLimit(caseStartNanos);
+        ReauthDeadline caseLimit = newCaseLimit(caseStartNanos);
         AuditTrail audit = reauthRun.newAuditTrail("reauth-positive", clientId);
         String result = "failed";
         try {
             Properties properties = KafkaOAuthClientConfiguration.fromEnvironment(environment).producerProperties();
             setShortTestTimeouts(properties);
+            Set<String> requestsBeforeControl = requestIds(reauthRun.tokenAuditPath);
             KafkaProducer<String, String> producer =
                     new KafkaProducer<>(properties, new StringSerializer(), new StringSerializer());
             try {
@@ -127,10 +131,11 @@ class KafkaOAuthBrokerIT {
                 TokenAuditEvent initialToken = awaitTokenEvent(
                         reauthRun.tokenAuditPath,
                         clientId,
-                        0,
+                        requestsBeforeControl,
                         200,
+                        false,
                         boundedDeadline(caseLimit.deadlineNanos(), CONTROL_REQUEST_TIMEOUT_MS));
-                ReauthDeadline renewalDeadline = ReauthDeadline.forRenewal(
+                ReauthDeadline renewalDeadline = forRenewal(
                         "positive",
                         caseStartNanos,
                         initialToken,
@@ -139,16 +144,20 @@ class KafkaOAuthBrokerIT {
                 audit.record(
                         "initial-token",
                         "status=200",
-                        "iatEpochSeconds=" + initialToken.issuedAtEpochSeconds,
-                        "expEpochSeconds=" + initialToken.expiresAtEpochSeconds,
+                        "requestId=" + initialToken.requestId(),
+                        "rejectionArmed=" + initialToken.rejectionArmed(),
+                        "iatEpochSeconds=" + initialToken.issuedAtEpochSeconds(),
+                        "expEpochSeconds=" + initialToken.expiresAtEpochSeconds(),
                         "ttlSeconds=" + initialToken.ttlSeconds(),
                         "effectiveReauthIntervalMs=" + reauthRun.reauthIntervalMs);
+                Set<String> requestsBeforeRenewal = requestIds(reauthRun.tokenAuditPath);
                 awaitReauthentication(
                         producer,
                         reauthRun.tokenAuditPath,
                         clientId,
-                        initialToken.sequence,
+                        requestsBeforeRenewal,
                         200,
+                        false,
                         SUCCESSFUL_REAUTH_METRIC,
                         successfulBefore,
                         renewalDeadline,
@@ -179,26 +188,27 @@ class KafkaOAuthBrokerIT {
         String topic = required(environment, "KAFKA_IT_TOPIC");
         String clientId = required(environment, PRODUCER_CLIENT_ID);
         long caseStartNanos = System.nanoTime();
-        ReauthDeadline caseLimit = ReauthDeadline.caseLimit(caseStartNanos);
+        ReauthDeadline caseLimit = newCaseLimit(caseStartNanos);
         AuditTrail audit = reauthRun.newAuditTrail("reauth-negative", clientId);
         String result = "failed";
         try {
             Properties properties = KafkaOAuthClientConfiguration.fromEnvironment(environment).producerProperties();
             setShortTestTimeouts(properties);
+            Set<String> requestsBeforeControl = requestIds(reauthRun.tokenAuditPath);
             KafkaProducer<String, String> producer =
                     new KafkaProducer<>(properties, new StringSerializer(), new StringSerializer());
             try {
                 String controlId = "reauth-negative-control-" + UUID.randomUUID();
                 String rejectedId = "reauth-negative-rejected-" + UUID.randomUUID();
-                long sequenceBeforeInitial = latestSequence(reauthRun.tokenAuditPath);
                 send(producer, topic, controlId, caseLimit.deadlineNanos());
                 TokenAuditEvent initialToken = awaitTokenEvent(
                         reauthRun.tokenAuditPath,
                         clientId,
-                        sequenceBeforeInitial,
+                        requestsBeforeControl,
                         200,
+                        false,
                         boundedDeadline(caseLimit.deadlineNanos(), CONTROL_REQUEST_TIMEOUT_MS));
-                ReauthDeadline renewalDeadline = ReauthDeadline.forRenewal(
+                ReauthDeadline renewalDeadline = forRenewal(
                         "negative",
                         caseStartNanos,
                         initialToken,
@@ -206,21 +216,24 @@ class KafkaOAuthBrokerIT {
                 audit.record(
                         "initial-token",
                         "status=200",
-                        "iatEpochSeconds=" + initialToken.issuedAtEpochSeconds,
-                        "expEpochSeconds=" + initialToken.expiresAtEpochSeconds,
+                        "requestId=" + initialToken.requestId(),
+                        "rejectionArmed=" + initialToken.rejectionArmed(),
+                        "iatEpochSeconds=" + initialToken.issuedAtEpochSeconds(),
+                        "expEpochSeconds=" + initialToken.expiresAtEpochSeconds(),
                         "ttlSeconds=" + initialToken.ttlSeconds(),
                         "effectiveReauthIntervalMs=" + reauthRun.reauthIntervalMs);
 
                 double failedBefore = metric(producer, FAILED_REAUTH_METRIC);
-                long sequenceBeforeRenewal = latestSequence(reauthRun.tokenAuditPath);
+                Set<String> requestsBeforeRenewal = requestIds(reauthRun.tokenAuditPath);
                 Files.createFile(reauthRun.rejectionMarkerPath);
                 audit.record("rejection-armed", "status=ready");
                 awaitReauthentication(
                         producer,
                         reauthRun.tokenAuditPath,
                         clientId,
-                        sequenceBeforeRenewal,
+                        requestsBeforeRenewal,
                         401,
+                        true,
                         FAILED_REAUTH_METRIC,
                         failedBefore,
                         renewalDeadline,
@@ -245,7 +258,7 @@ class KafkaOAuthBrokerIT {
                 assertPostMarkerRequestsRejected(
                         reauthRun.tokenAuditPath,
                         clientId,
-                        sequenceBeforeRenewal);
+                        requestsBeforeRenewal);
                 audit.record(
                         "negative-assertions",
                         "failedReauthTotal=" + metric(producer, FAILED_REAUTH_METRIC),
@@ -364,20 +377,29 @@ class KafkaOAuthBrokerIT {
     private static TokenAuditEvent awaitTokenEvent(
             Path auditPath,
             String clientId,
-            long afterSequence,
+            Set<String> knownRequestIds,
             int expectedStatus,
+            boolean expectedRejectionArmed,
             long deadlineNanos) throws Exception {
         long startedNanos = System.nanoTime();
         long effectiveTimeoutMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - startedNanos);
         while (System.nanoTime() < deadlineNanos) {
-            for (TokenAuditEvent event : readTokenAudit(auditPath)) {
-                if (event.sequence > afterSequence && event.clientId.equals(clientId)) {
-                    assertEquals(
-                            expectedStatus,
-                            event.status,
-                            "Unexpected token endpoint status for " + clientId);
-                    return event;
-                }
+            List<TokenAuditEvent> newEvents = eventsSince(auditPath, knownRequestIds, clientId);
+            if (!newEvents.isEmpty()) {
+                TokenAuditEvent event = newEvents.get(0);
+                assertEquals(
+                        expectedStatus,
+                        event.status(),
+                        "Unexpected token endpoint status for " + clientId);
+                assertEquals(
+                        expectedRejectionArmed,
+                        event.rejectionArmed(),
+                        "Unexpected rejection-marker state for " + clientId);
+                assertEquals(
+                        expectedRejectionArmed,
+                        event.rejectionApplied(),
+                        "Unexpected rejection decision for " + clientId);
+                return event;
             }
             pollDelay(deadlineNanos);
         }
@@ -392,31 +414,45 @@ class KafkaOAuthBrokerIT {
             KafkaProducer<String, String> producer,
             Path tokenAuditPath,
             String clientId,
-            long afterSequence,
+            Set<String> knownRequestIds,
             int expectedStatus,
+            boolean expectedRejectionArmed,
             String metricName,
             double metricBefore,
             ReauthDeadline deadline,
             AuditTrail audit) throws Exception {
         long startedNanos = System.nanoTime();
         long effectiveTimeoutMs = deadline.remainingMs();
-        logWaitStart(deadline.caseName, effectiveTimeoutMs, deadline.deadlineEpochMs);
+        logWaitStart(
+                deadline.caseName(),
+                effectiveTimeoutMs,
+                deadline.deadlineEpochMs(),
+                deadline.scheduledReauthEpochMs());
         audit.record(
                 "reauth-wait-started",
                 "effectiveTimeoutMs=" + effectiveTimeoutMs,
-                "deadlineEpochMs=" + deadline.deadlineEpochMs,
+                "deadlineEpochMs=" + deadline.deadlineEpochMs(),
+                "scheduledReauthEpochMs=" + deadline.scheduledReauthEpochMs(),
                 "metric=" + metricName,
                 "metricBaseline=" + metricBefore);
 
-        while (System.nanoTime() < deadline.deadlineNanos) {
-            List<TokenAuditEvent> renewalEvents = readTokenAudit(tokenAuditPath).stream()
-                    .filter(event -> event.sequence > afterSequence && event.clientId.equals(clientId))
+        while (System.nanoTime() < deadline.deadlineNanos()) {
+            List<TokenAuditEvent> allNewEvents = eventsSince(tokenAuditPath, knownRequestIds, clientId);
+            List<TokenAuditEvent> renewalEvents = allNewEvents.stream()
+                    .filter(event -> event.rejectionArmed() == expectedRejectionArmed)
                     .toList();
-            for (TokenAuditEvent event : renewalEvents) {
+            for (TokenAuditEvent event : allNewEvents) {
+                if (expectedRejectionArmed && !event.rejectionArmed()) {
+                    continue;
+                }
                 assertEquals(
                         expectedStatus,
-                        event.status,
+                        event.status(),
                         "Unexpected token endpoint status during reauthentication");
+                assertEquals(
+                        expectedRejectionArmed,
+                        event.rejectionApplied(),
+                        "Unexpected rejection decision during reauthentication");
             }
 
             double observedMetric = metric(producer, metricName);
@@ -425,21 +461,24 @@ class KafkaOAuthBrokerIT {
                 audit.record(
                         "reauthentication-observed",
                         "httpStatus=" + expectedStatus,
+                        "requestId=" + renewalEvents.get(0).requestId(),
+                        "rejectionArmed=" + renewalEvents.get(0).rejectionArmed(),
                         "metric=" + metricName,
                         "metricValue=" + observedMetric,
                         "elapsedMs=" + elapsedMs);
                 System.out.printf(
                         "kafka-it reauth case=%s state=observed effectiveTimeoutMs=%d elapsedMs=%d "
-                                + "httpStatus=%d metric=%s metricValue=%.0f%n",
-                        deadline.caseName,
+                                + "httpStatus=%d requestId=%s metric=%s metricValue=%.0f%n",
+                        deadline.caseName(),
                         effectiveTimeoutMs,
                         elapsedMs,
                         expectedStatus,
+                        renewalEvents.get(0).requestId(),
                         metricName,
                         observedMetric);
                 return;
             }
-            pollDelay(deadline.deadlineNanos);
+            pollDelay(deadline.deadlineNanos());
         }
 
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
@@ -447,6 +486,8 @@ class KafkaOAuthBrokerIT {
         audit.record(
                 "reauthentication-timeout",
                 "effectiveTimeoutMs=" + effectiveTimeoutMs,
+                "deadlineEpochMs=" + deadline.deadlineEpochMs(),
+                "scheduledReauthEpochMs=" + deadline.scheduledReauthEpochMs(),
                 "elapsedMs=" + elapsedMs,
                 "metric=" + metricName,
                 "metricValue=" + observedMetric);
@@ -459,58 +500,15 @@ class KafkaOAuthBrokerIT {
     }
 
     private static void assertPostMarkerRequestsRejected(
-            Path auditPath, String clientId, long afterSequence) throws IOException {
-        List<TokenAuditEvent> events = readTokenAudit(auditPath).stream()
-                .filter(event -> event.sequence > afterSequence && event.clientId.equals(clientId))
+            Path auditPath, String clientId, Set<String> knownRequestIds) throws IOException {
+        List<TokenAuditEvent> events = eventsSince(auditPath, knownRequestIds, clientId).stream()
+                .filter(TokenAuditEvent::rejectionArmed)
                 .toList();
-        assertFalse(events.isEmpty(), "Expected an audited token renewal after the rejection marker");
+        assertFalse(events.isEmpty(), "Expected an audited token request processed with rejection armed");
         assertTrue(
-                events.stream().allMatch(event -> event.status == 401),
-                "Every application token request after the marker must receive HTTP 401");
-    }
-
-    private static List<TokenAuditEvent> readTokenAudit(Path path) throws IOException {
-        if (!Files.exists(path)) {
-            return List.of();
-        }
-        String content = Files.readString(path, StandardCharsets.UTF_8);
-        int completeLineEnd = content.lastIndexOf('\n');
-        if (completeLineEnd < 0) {
-            return List.of();
-        }
-
-        List<TokenAuditEvent> events = new ArrayList<>();
-        for (String line : content.substring(0, completeLineEnd).split("\\R")) {
-            if (line.isBlank()) {
-                continue;
-            }
-            Map<String, String> fields = new LinkedHashMap<>();
-            for (String field : line.split("\t")) {
-                int separator = field.indexOf('=');
-                if (separator > 0) {
-                    fields.put(field.substring(0, separator), field.substring(separator + 1));
-                }
-            }
-            events.add(new TokenAuditEvent(
-                    Long.parseLong(required(fields, "sequence")),
-                    required(fields, "clientId"),
-                    Integer.parseInt(required(fields, "status")),
-                    optionalLong(fields, "iatEpochSeconds"),
-                    optionalLong(fields, "expEpochSeconds")));
-        }
-        return events;
-    }
-
-    private static long latestSequence(Path path) throws IOException {
-        return readTokenAudit(path).stream()
-                .mapToLong(event -> event.sequence)
-                .max()
-                .orElse(0);
-    }
-
-    private static long optionalLong(Map<String, String> fields, String name) {
-        String value = fields.get(name);
-        return value == null ? -1 : Long.parseLong(value);
+                events.stream().allMatch(
+                        event -> event.status() == 401 && event.rejectionApplied()),
+                "Every simulator request processed with the rejection marker armed must receive HTTP 401");
     }
 
     private static void pollDelay(long deadlineNanos) throws InterruptedException {
@@ -560,11 +558,14 @@ class KafkaOAuthBrokerIT {
                 "Reauthentication case exceeded its 6-minute bound; elapsedMs=" + elapsedMs);
     }
 
-    private static void logWaitStart(String caseName, long timeoutMs, long deadlineEpochMs) {
+    private static void logWaitStart(
+            String caseName, long timeoutMs, long deadlineEpochMs, long scheduledReauthEpochMs) {
         System.out.printf(
-                "kafka-it reauth case=%s state=waiting effectiveTimeoutMs=%d deadlineEpochMs=%d%n",
+                "kafka-it reauth case=%s state=waiting effectiveTimeoutMs=%d "
+                        + "scheduledReauthEpochMs=%d deadlineEpochMs=%d%n",
                 caseName,
                 timeoutMs,
+                scheduledReauthEpochMs,
                 deadlineEpochMs);
     }
 
@@ -741,80 +742,6 @@ class KafkaOAuthBrokerIT {
 
     private static String safeAuditField(String value) {
         return value.replace('\t', '_').replace('\r', '_').replace('\n', '_');
-    }
-
-    private record TokenAuditEvent(
-            long sequence,
-            String clientId,
-            int status,
-            long issuedAtEpochSeconds,
-            long expiresAtEpochSeconds) {
-        private long ttlSeconds() {
-            return expiresAtEpochSeconds - issuedAtEpochSeconds;
-        }
-    }
-
-    private static final class ReauthDeadline {
-        private final String caseName;
-        private final long deadlineNanos;
-        private final long deadlineEpochMs;
-
-        private ReauthDeadline(String caseName, long deadlineNanos, long deadlineEpochMs) {
-            this.caseName = caseName;
-            this.deadlineNanos = deadlineNanos;
-            this.deadlineEpochMs = deadlineEpochMs;
-        }
-
-        private static ReauthDeadline caseLimit(long caseStartNanos) {
-            long deadlineNanos = caseStartNanos + TimeUnit.MILLISECONDS.toNanos(MAX_CASE_WAIT_MS);
-            long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime());
-            return new ReauthDeadline(
-                    "case",
-                    deadlineNanos,
-                    System.currentTimeMillis() + Math.max(0, remainingMs));
-        }
-
-        private static ReauthDeadline forRenewal(
-                String caseName,
-                long caseStartNanos,
-                TokenAuditEvent initialToken,
-                long reauthIntervalMs) {
-            assertEquals(
-                    EXPECTED_TOKEN_TTL_SECONDS,
-                    initialToken.ttlSeconds(),
-                    "The observed access-token TTL must be 300 seconds for this integration run");
-            assertTrue(
-                    reauthIntervalMs < TimeUnit.SECONDS.toMillis(initialToken.ttlSeconds()),
-                    "The effective reauthentication interval must be less than the observed token TTL");
-
-            long reauthDeadlineEpochMs = TimeUnit.SECONDS.toMillis(initialToken.issuedAtEpochSeconds)
-                    + reauthIntervalMs
-                    + POST_EXPIRY_GRACE_MS;
-            long expiryDeadlineEpochMs = TimeUnit.SECONDS.toMillis(initialToken.expiresAtEpochSeconds)
-                    + POST_EXPIRY_GRACE_MS;
-            long deadlineEpochMs = Math.min(reauthDeadlineEpochMs, expiryDeadlineEpochMs);
-            long nowNanos = System.nanoTime();
-            long remainingMs = Math.max(0, deadlineEpochMs - System.currentTimeMillis());
-            long tokenDeadlineNanos =
-                    nowNanos + TimeUnit.MILLISECONDS.toNanos(remainingMs);
-            long caseDeadlineNanos =
-                    caseStartNanos + TimeUnit.MILLISECONDS.toNanos(MAX_CASE_WAIT_MS);
-            long deadlineNanos = Math.min(tokenDeadlineNanos, caseDeadlineNanos);
-            assertTrue(
-                    deadlineNanos > nowNanos,
-                    "Reauthentication deadline has already elapsed; inspect token exp and effective broker interval");
-            return new ReauthDeadline(caseName, deadlineNanos, deadlineEpochMs);
-        }
-
-        private long remainingMs() {
-            return Math.max(
-                    0,
-                    TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()));
-        }
-
-        private long deadlineNanos() {
-            return deadlineNanos;
-        }
     }
 
     private static void setShortTestTimeouts(Properties properties) {
