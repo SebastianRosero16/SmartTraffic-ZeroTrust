@@ -68,13 +68,13 @@ this change does not modify Docker, Compose, listener settings, or ACL state.
 ## Token expiry and reauthentication
 
 An authenticated Kafka connection can outlive the JWT used at its initial
-SASL exchange. Broker configuration must therefore set
-`connections.max.reauth.ms` to a value no greater than the Auth Server access
-token lifetime, with the final values coordinated by the team. At each forced
-reauthentication, the client callback obtains a current token and the broker
-revalidates issuer, audience, signature, and expiry. The actual broker/client
-reauthentication behavior must be verified end-to-end before deployment; this
-Java module cannot enforce broker session expiry.
+SASL exchange. Héctor reported `connections.max.reauth.ms=0`, which disables
+forced reauthentication; expiration of a JWT therefore does not prove that an
+already-authenticated connection is closed. This behavior is **pending**:
+coordinate a positive broker value no greater than the actual Auth Server
+access-token lifetime, then test that a live connection reauthenticates with a
+fresh token (or fails closed when it cannot) after token expiry. Neither the
+broker setting nor the reauthentication test is changed/claimed in this PR.
 
 ## Tests and pending integration checks
 
@@ -139,53 +139,41 @@ the topic ACL is effective.
 
 The profile does not start Docker Compose or Auth Server. It is safe to invoke
 only after those external services, TLS trust material, test identities, topic,
-and ACLs are ready. The current broker definition does not configure
-`connections.max.reauth.ms`; therefore this profile does not claim to verify
-forced reauthentication. If Héctor enables that setting, add a separate
-expiry/reauthentication case using an Auth Server-issued short-lived token
-before treating expiry behavior as verified.
+and ACLs are ready. The profile does not test expiration/reauthentication; with
+the reported `connections.max.reauth.ms=0`, the broker currently does not
+force it. Add a separate expiry case with an Auth Server-issued short-lived
+token after the broker is configured to require reauthentication.
 
 No successful client-side `kafka-it` integration has been demonstrated.
 Passing unit tests do not prove client authentication, ACLs, or forced
 reauthentication against the broker.
 
-## Inter-broker principal claim investigation
+## JWT access-token type investigation
 
-Héctor's latest local run reached KRaft startup with the Auth Server/JWKS
-reachable and reported an authentication failure:
-`No principal name in JWT claim: sub`. The raw token and credentials were not
-shared.
+The reported sanitized error was `Token validation failed: Token type not
+set`. Strimzi Kafka OAuth 0.18.1's JWT validator requires the exact value
+`Bearer` in a JWT payload claim named `typ` or `token_type`; it rejects the
+token if both claims are absent. It does not interpret the OAuth token
+response's separate top-level `token_type` field as a JWT claim.
 
-The Auth Server's existing client-credentials integration test verifies that
-its issued JWT contains `sub` (the registered client ID), `iss`, and `aud`.
-Strimzi Kafka OAuth 0.18.1 uses `sub` as the default principal claim when
-`oauth.username.claim` is not set. These checks do not prove that the broker's
-inter-broker client used that same token or that its configured login callback
-was applied.
+The Auth Server currently returns `token_type: Bearer` in the OAuth response,
+but its access-token customizer previously added only audience and `jti`
+(besides standard claims). The existing test asserted the response metadata
+and did not assert a token-type claim. The error indicates that Strimzi found
+neither payload claim in the presented JWT. No JWT was shared or decoded in
+this investigation.
 
-The broker Compose in PR #14 currently configures the client login callback
-globally as `KAFKA_SASL_LOGIN_CALLBACK_HANDLER_CLASS`. Strimzi 0.18.1's broker
-examples configure the OAuth client callback on the `CLIENT` listener and
-`OAUTHBEARER` mechanism using
-`KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_LOGIN_CALLBACK_HANDLER_CLASS`.
-Because inter-broker traffic uses that listener/mechanism, this mismatch is
-the leading configuration cause to verify. The proposed correction belongs
-in Héctor's broker configuration, not this PR: use the listener/mechanism
-callback key and confirm the external `KafkaClient` JAAS entry obtains a token
-for the registered broker client. Keep `sub` as the identity claim and retain
-signature, issuer, audience, TLS, and ACL validation; do not relax OAuth to
-bypass the error.
-
-Héctor subsequently reported in PR #14 that the broker reached KRaft healthy,
-loaded JWKS, completed inter-broker OAuth login with the broker client's
-principal, and kept controller TLS/mTLS private. Treat the `sub` failure as
-resolved for that reported broker startup, not as evidence that client-side
-`kafka-it` has passed. Do not log or share tokens. The authorized client
-operation and all negative cases still need verification by `kafka-it`.
+Correction in this branch: the Auth Server adds the payload claim
+`token_type: Bearer` to access tokens while preserving signature, issuer,
+audience, and Strimzi's type validation. Its integration test now asserts that
+claim inside the signed JWT separately from the OAuth response's
+`token_type`. No broker-side validation is disabled or relaxed. The correction
+still requires Héctor to rebuild/restart the Auth Server and rerun `kafka-it`;
+it is not yet demonstrated against the broker.
 
 ## Latest execution status
 
-Checked on 2026-11-12 at 18:54 local time:
+Checked on 2026-11-12 at 19:24 local time:
 
 - Docker is now available (`docker` 28.5.1, Compose 2.40.3). The earlier check
   at 17:26 failed because the `dockerDesktopLinuxEngine` named pipe was
@@ -195,6 +183,10 @@ Checked on 2026-11-12 at 18:54 local time:
   Server/JWKS runtime configuration are on Héctor's environment.
 - `mvn test`: `BUILD SUCCESS`, 46 tests, 0 failures, 0 errors, 0 skipped.
 - `mvn package`: `BUILD SUCCESS`, 46 tests, 0 failures, 0 errors, 0 skipped.
+- `mvn -pl services/auth-server test`: `BUILD SUCCESS`, 8 tests, 0 failures,
+  0 errors, 0 skipped, including the JWT `token_type` claim assertion.
+- `mvn -pl shared/kafka-security -Pkafka-it -DskipTests test`: `BUILD SUCCESS`;
+  this compiled the profile configuration but intentionally skipped the tests.
 - `mvn -pl shared/kafka-security -Pkafka-it -DskipTests test`: `BUILD SUCCESS`;
   the integration test source compiled, but tests were intentionally skipped.
 - `mvn -pl shared/kafka-security -Pkafka-it test`: `BUILD SUCCESS`, 5 unit
@@ -212,6 +204,13 @@ Checked on 2026-11-12 at 18:54 local time:
   startup: Compose valid, KRaft healthy, JWKS loaded, inter-broker OAuth login
   using the broker client principal, and private controller TLS/mTLS. This
   report does not include execution of this module's `kafka-it` profile.
+- Héctor reported that `kafka-it` then failed on the first publish with
+  `Token validation failed: Token type not set`. Strimzi requires JWT payload
+  `typ` or `token_type` equal to `Bearer`; the Auth Server correction and
+  claim assertion described above have been added but still need testing.
+- Héctor reported `connections.max.reauth.ms=0`. Forced reauthentication on
+  token expiry is disabled and remains explicitly pending; no expiry
+  reauthentication test has been run.
 - No reachable broker address, Auth Server token/JWKS URLs, TLS trust material,
   test client credentials, or provisioned test ACLs are available in this
   workspace. No credentials, tokens, or certificates were requested or added.

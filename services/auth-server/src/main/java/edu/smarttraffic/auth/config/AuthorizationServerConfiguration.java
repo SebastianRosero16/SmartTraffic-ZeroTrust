@@ -82,6 +82,7 @@ public class AuthorizationServerConfiguration {
                 }
                 context.getClaims().audience(client.getAudiences());
                 context.getClaims().id(UUID.randomUUID().toString());
+                context.getClaims().claim("token_type", "Bearer");
                 context.getJwsHeader()
                         .algorithm(SignatureAlgorithm.RS256)
                         .keyId(properties.getKeyId());
