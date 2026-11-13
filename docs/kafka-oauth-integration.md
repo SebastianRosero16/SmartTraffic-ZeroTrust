@@ -31,14 +31,15 @@ registered client, so the applications do not send a separate audience request
 parameter. Instead, configure each application client to receive tokens whose
 `aud` is `smarttraffic-kafka`.
 
-The broker listener's `oauth.client.id=smarttraffic-kafka`, with audience
-checking enabled, identifies the Kafka resource/audience expected in incoming
-tokens. It is not a replacement for an application's client ID. The
-inter-broker client likewise keeps its own registered OAuth identity in the
-external `KafkaClient` JAAS configuration and must receive a token with
-`aud=smarttraffic-kafka`. The broker validates issuer, audience, and JWT
-signature using the Auth Server JWKS endpoint. Token and JWKS URLs must use
-HTTPS.
+For the approved local-broker test, the inter-broker OAuth identity is exactly
+`smarttraffic-kafka`: Héctor's broker configuration uses it as
+`OAUTH_KAFKA_CLIENT_ID` for the external `KafkaClient` JAAS credentials. The
+shared listener also uses `oauth.client.id=smarttraffic-kafka` as the expected
+audience/resource identifier with audience checking enabled. Thus this value
+serves both as the inter-broker client ID and the expected JWT `aud` for this
+test; it does not replace or get reused as any application service's client
+ID. The broker validates issuer, audience, and JWT signature using the Auth
+Server JWKS endpoint. Token and JWKS URLs must use HTTPS.
 
 Scopes may be added to tokens, but the Kafka broker does not use them as the
 resource authorization policy. The effective authorization is the broker's
@@ -216,10 +217,11 @@ Checked on 2026-11-12 at 19:50 local time:
   `typ` or `token_type` equal to `Bearer`; the Auth Server correction and
   claim assertion described above have been added but still need testing.
 - Héctor is testing a single listener with
-  `oauth.client.id=smarttraffic-kafka` as the expected audience/resource ID.
-  Application clients retain their individual OAuth client IDs and must be
-  configured in Auth Server to receive `aud=smarttraffic-kafka`. The result
-  of Héctor's test is pending; this is not a validated integration.
+  `smarttraffic-kafka` as both the inter-broker OAuth client ID and the
+  listener's expected audience/resource ID. Application clients retain their
+  individual OAuth client IDs and must be configured in Auth Server to receive
+  `aud=smarttraffic-kafka`. The result of Héctor's test is pending; this is
+  not a validated integration.
 - Héctor reported `connections.max.reauth.ms=0`. Forced reauthentication on
   token expiry is disabled and remains explicitly pending; no expiry
   reauthentication test has been run.
