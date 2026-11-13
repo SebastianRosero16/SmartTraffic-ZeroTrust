@@ -19,6 +19,11 @@ final class KafkaOAuthReauthSupport {
     static final long EXPECTED_REAUTH_INTERVAL_MS = 240_000;
     static final long MAX_CASE_WAIT_MS = Duration.ofMinutes(6).toMillis();
     static final long POST_EXPIRY_GRACE_MS = Duration.ofSeconds(60).toMillis();
+    static final long POST_REAUTH_SEND_TIMEOUT_MS = Duration.ofSeconds(20).toMillis();
+    static final long TOPIC_CHECK_TIMEOUT_MS = Duration.ofSeconds(10).toMillis();
+    static final long POST_REAUTH_CLOSE_TIMEOUT_MS = Duration.ofSeconds(5).toMillis();
+    static final long POST_REAUTH_RESERVE_MS =
+            POST_REAUTH_SEND_TIMEOUT_MS + TOPIC_CHECK_TIMEOUT_MS + POST_REAUTH_CLOSE_TIMEOUT_MS;
 
     private KafkaOAuthReauthSupport() {}
 
@@ -93,19 +98,22 @@ final class KafkaOAuthReauthSupport {
                 "case",
                 deadlineNanos,
                 System.currentTimeMillis() + Math.max(0, remainingMs),
-                -1);
+                -1,
+                0);
     }
 
     static ReauthDeadline forRenewal(
             String caseName,
             long caseStartNanos,
             TokenAuditEvent initialToken,
-            long reauthIntervalMs) {
+            long reauthIntervalMs,
+            long reservedPostReauthMs) {
         return forRenewal(
                 caseName,
                 caseStartNanos,
                 initialToken,
                 reauthIntervalMs,
+                reservedPostReauthMs,
                 System.nanoTime(),
                 System.currentTimeMillis());
     }
@@ -115,6 +123,7 @@ final class KafkaOAuthReauthSupport {
             long caseStartNanos,
             TokenAuditEvent initialToken,
             long reauthIntervalMs,
+            long reservedPostReauthMs,
             long nowNanos,
             long nowEpochMs) {
         if (initialToken.ttlSeconds() != EXPECTED_TOKEN_TTL_SECONDS) {
@@ -126,6 +135,10 @@ final class KafkaOAuthReauthSupport {
             throw new IllegalArgumentException(
                     "The effective reauthentication interval must be positive and less than the token TTL");
         }
+        if (reservedPostReauthMs < 0 || reservedPostReauthMs >= MAX_CASE_WAIT_MS) {
+            throw new IllegalArgumentException(
+                    "The post-reauthentication reserve must be non-negative and shorter than the case limit");
+        }
 
         long scheduledReauthEpochMs =
                 TimeUnit.SECONDS.toMillis(initialToken.issuedAtEpochSeconds()) + reauthIntervalMs;
@@ -135,9 +148,11 @@ final class KafkaOAuthReauthSupport {
         long caseRemainingNanos = caseStartNanos
                 + TimeUnit.MILLISECONDS.toNanos(MAX_CASE_WAIT_MS)
                 - nowNanos;
+        long reauthCaseDeadlineNanos = caseStartNanos
+                + TimeUnit.MILLISECONDS.toNanos(MAX_CASE_WAIT_MS - reservedPostReauthMs);
         long deadlineNanos = Math.min(
                 nowNanos + TimeUnit.MILLISECONDS.toNanos(Math.max(0, expiryGraceRemainingMs)),
-                caseStartNanos + TimeUnit.MILLISECONDS.toNanos(MAX_CASE_WAIT_MS));
+                reauthCaseDeadlineNanos);
         if (deadlineNanos <= nowNanos || caseRemainingNanos <= 0) {
             throw new IllegalStateException(
                     "Reauthentication deadline has already elapsed; inspect token exp and effective broker interval");
@@ -146,7 +161,25 @@ final class KafkaOAuthReauthSupport {
         long effectiveDeadlineEpochMs =
                 nowEpochMs + TimeUnit.NANOSECONDS.toMillis(deadlineNanos - nowNanos);
         return new ReauthDeadline(
-                caseName, deadlineNanos, effectiveDeadlineEpochMs, scheduledReauthEpochMs);
+                caseName,
+                deadlineNanos,
+                effectiveDeadlineEpochMs,
+                scheduledReauthEpochMs,
+                reservedPostReauthMs);
+    }
+
+    static long verificationDeadlineNanos(long caseDeadlineNanos, long nowNanos, long budgetMs)
+            throws java.util.concurrent.TimeoutException {
+        if (budgetMs <= 0) {
+            throw new IllegalArgumentException("The administrative verification budget must be positive");
+        }
+        if (nowNanos >= caseDeadlineNanos) {
+            throw new java.util.concurrent.TimeoutException(
+                    "No case time remains for administrative topic verification");
+        }
+        return Math.min(
+                caseDeadlineNanos,
+                nowNanos + TimeUnit.MILLISECONDS.toNanos(budgetMs));
     }
 
     private static String required(Map<String, String> fields, String name) throws IOException {
@@ -199,7 +232,11 @@ final class KafkaOAuthReauthSupport {
     }
 
     record ReauthDeadline(
-            String caseName, long deadlineNanos, long deadlineEpochMs, long scheduledReauthEpochMs) {
+            String caseName,
+            long deadlineNanos,
+            long deadlineEpochMs,
+            long scheduledReauthEpochMs,
+            long reservedPostReauthMs) {
         long remainingMs() {
             return Math.max(
                     0,

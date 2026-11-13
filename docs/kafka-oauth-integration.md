@@ -207,11 +207,24 @@ return 401, while interbroker and administrative identities are not rejected.
 
 The test records token `iat` and `exp` from the locally issued JWT without
 writing the JWT or response body. It derives the signal deadline from the
-observed expiry and configured effective reauthentication interval, caps each
-case at six minutes, and allows observation through `exp` plus 60 seconds.
-Polling uses `System.nanoTime()` and bounded intervals, not a fixed sleep. It
-logs the scheduled reauthentication time, effective deadline, and monotonic
-elapsed time. Failsafe kills a stuck test process after 900 seconds.
+observed expiry and configured effective reauthentication interval. Each case
+has a hard six-minute monotonic deadline. The reauthentication wait reserves
+35 seconds for the bounded post-renewal send (20 s), administrative topic
+verification (10 s), and producer close (5 s), so its deadline is the earlier
+of `exp + 60 s` and the case deadline minus that reserve. Preserving the full
+60-second post-expiry grace and all follow-up budgets would require at least
+6 minutes 35 seconds from token issuance, plus setup time; this change does
+not increase the agreed six-minute case limit. Polling uses `System.nanoTime()`
+and bounded intervals, not a fixed sleep. It logs the scheduled
+reauthentication time, effective deadline, reserve, and monotonic elapsed
+time. Failsafe kills a stuck test process after 900 seconds.
+
+Administrative verification has its own deadline, starts before constructing
+the consumer, and is clamped to the remaining case time. It scans assigned
+partitions through their captured end offsets; a value is considered absent
+only after that scan completes. If the time budget expires first, the test
+fails with a timeout instead of treating an incomplete scan as proof of
+absence.
 
 Each token audit entry has a UUID request ID and records `rejectionArmed` and
 `rejectionApplied` as observed when that request enters the test filter. The

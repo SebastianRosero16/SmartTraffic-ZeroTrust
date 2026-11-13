@@ -2,10 +2,15 @@ package edu.smarttraffic.kafkasecurity;
 
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.EXPECTED_REAUTH_INTERVAL_MS;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.MAX_CASE_WAIT_MS;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.POST_REAUTH_CLOSE_TIMEOUT_MS;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.POST_REAUTH_RESERVE_MS;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.POST_REAUTH_SEND_TIMEOUT_MS;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.TOPIC_CHECK_TIMEOUT_MS;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.eventsSince;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.forRenewal;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.newCaseLimit;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.requestIds;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.verificationDeadlineNanos;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -36,6 +41,8 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
 import org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule;
@@ -57,8 +64,6 @@ class KafkaOAuthBrokerIT {
     private static final String FAILED_REAUTH_METRIC = "failed-reauthentication-total";
     private static final long POLL_INTERVAL_MS = 250;
     private static final long CONTROL_REQUEST_TIMEOUT_MS = Duration.ofSeconds(20).toMillis();
-    private static final long SEND_TIMEOUT_MS = Duration.ofSeconds(20).toMillis();
-    private static final long TOPIC_CHECK_TIMEOUT_MS = Duration.ofSeconds(10).toMillis();
     private static ReauthRun reauthRun;
 
     @BeforeAll
@@ -139,7 +144,8 @@ class KafkaOAuthBrokerIT {
                         "positive",
                         caseStartNanos,
                         initialToken,
-                        reauthRun.reauthIntervalMs);
+                        reauthRun.reauthIntervalMs,
+                        POST_REAUTH_RESERVE_MS);
                 double successfulBefore = metric(producer, SUCCESSFUL_REAUTH_METRIC);
                 audit.record(
                         "initial-token",
@@ -212,7 +218,8 @@ class KafkaOAuthBrokerIT {
                         "negative",
                         caseStartNanos,
                         initialToken,
-                        reauthRun.reauthIntervalMs);
+                        reauthRun.reauthIntervalMs,
+                        POST_REAUTH_RESERVE_MS);
                 audit.record(
                         "initial-token",
                         "status=200",
@@ -323,7 +330,7 @@ class KafkaOAuthBrokerIT {
             KafkaProducer<String, String> producer, String topic, String value, long deadlineNanos)
             throws InterruptedException, ExecutionException, TimeoutException {
         producer.send(new ProducerRecord<>(topic, UUID.randomUUID().toString(), value))
-                .get(remainingMillis(deadlineNanos, SEND_TIMEOUT_MS), TimeUnit.MILLISECONDS);
+                .get(remainingMillis(deadlineNanos, POST_REAUTH_SEND_TIMEOUT_MS), TimeUnit.MILLISECONDS);
     }
 
     private static double metric(KafkaProducer<String, String> producer, String name) {
@@ -344,22 +351,36 @@ class KafkaOAuthBrokerIT {
     }
 
     private static boolean topicContains(
-            Map<String, String> environment, String topic, String value, long deadlineNanos)
+            Map<String, String> environment, String topic, String value, long caseDeadlineNanos)
             throws TimeoutException {
+        long topicDeadlineNanos =
+                verificationDeadlineNanos(caseDeadlineNanos, System.nanoTime(), TOPIC_CHECK_TIMEOUT_MS);
         Map<String, String> adminEnvironment = new HashMap<>(environment);
         adminEnvironment.put(PRODUCER_CLIENT_ID, required(environment, "KAFKA_IT_ADMIN_CLIENT_ID"));
         adminEnvironment.put(PRODUCER_CLIENT_SECRET, required(environment, "KAFKA_IT_ADMIN_CLIENT_SECRET"));
         Properties consumerProperties = KafkaOAuthClientConfiguration.fromEnvironment(adminEnvironment)
                 .consumerProperties("reauth-verification-" + UUID.randomUUID());
         consumerProperties.put("auto.offset.reset", "earliest");
+        setShortTestTimeouts(consumerProperties);
         KafkaConsumer<String, String> consumer =
                 new KafkaConsumer<>(consumerProperties, new StringDeserializer(), new StringDeserializer());
         try {
-            consumer.subscribe(List.of(topic));
-            long topicDeadlineNanos = Math.min(
-                    deadlineNanos,
-                    System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(TOPIC_CHECK_TIMEOUT_MS));
-            while (System.nanoTime() < topicDeadlineNanos) {
+            long metadataTimeoutMs = remainingMillis(topicDeadlineNanos, TOPIC_CHECK_TIMEOUT_MS);
+            List<PartitionInfo> partitionInfo = consumer.partitionsFor(
+                    topic, Duration.ofMillis(metadataTimeoutMs));
+            if (partitionInfo == null || partitionInfo.isEmpty()) {
+                throw new TimeoutException("No partitions were available for administrative topic verification");
+            }
+            List<TopicPartition> partitions = partitionInfo.stream()
+                    .map(info -> new TopicPartition(topic, info.partition()))
+                    .toList();
+            consumer.assign(partitions);
+            consumer.seekToBeginning(partitions);
+            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(
+                    partitions,
+                    Duration.ofMillis(remainingMillis(topicDeadlineNanos, TOPIC_CHECK_TIMEOUT_MS)));
+
+            while (true) {
                 long pollMs = remainingMillis(topicDeadlineNanos, TimeUnit.SECONDS.toMillis(1));
                 for (ConsumerRecord<String, String> record :
                         consumer.poll(Duration.ofMillis(pollMs))) {
@@ -367,10 +388,25 @@ class KafkaOAuthBrokerIT {
                         return true;
                     }
                 }
+
+                boolean scannedCurrentEndOffsets = true;
+                for (TopicPartition partition : partitions) {
+                    long position = consumer.position(
+                            partition,
+                            Duration.ofMillis(remainingMillis(topicDeadlineNanos, TOPIC_CHECK_TIMEOUT_MS)));
+                    Long endOffset = endOffsets.get(partition);
+                    assertNotNull(endOffset, "Kafka did not return an end offset for " + partition);
+                    if (position < endOffset) {
+                        scannedCurrentEndOffsets = false;
+                        break;
+                    }
+                }
+                if (scannedCurrentEndOffsets) {
+                    return false;
+                }
             }
-            return false;
         } finally {
-            closeWithinDeadline(consumer, deadlineNanos);
+            closeWithinDeadline(consumer, topicDeadlineNanos);
         }
     }
 
@@ -427,12 +463,14 @@ class KafkaOAuthBrokerIT {
                 deadline.caseName(),
                 effectiveTimeoutMs,
                 deadline.deadlineEpochMs(),
-                deadline.scheduledReauthEpochMs());
+                deadline.scheduledReauthEpochMs(),
+                deadline.reservedPostReauthMs());
         audit.record(
                 "reauth-wait-started",
                 "effectiveTimeoutMs=" + effectiveTimeoutMs,
                 "deadlineEpochMs=" + deadline.deadlineEpochMs(),
                 "scheduledReauthEpochMs=" + deadline.scheduledReauthEpochMs(),
+                "reservedPostReauthMs=" + deadline.reservedPostReauthMs(),
                 "metric=" + metricName,
                 "metricBaseline=" + metricBefore);
 
@@ -488,6 +526,7 @@ class KafkaOAuthBrokerIT {
                 "effectiveTimeoutMs=" + effectiveTimeoutMs,
                 "deadlineEpochMs=" + deadline.deadlineEpochMs(),
                 "scheduledReauthEpochMs=" + deadline.scheduledReauthEpochMs(),
+                "reservedPostReauthMs=" + deadline.reservedPostReauthMs(),
                 "elapsedMs=" + elapsedMs,
                 "metric=" + metricName,
                 "metricValue=" + observedMetric);
@@ -535,12 +574,14 @@ class KafkaOAuthBrokerIT {
 
     private static void closeWithinDeadline(
             KafkaProducer<String, String> producer, long deadlineNanos) {
-        producer.close(Duration.ofMillis(nonNegativeRemainingMillis(deadlineNanos, 5_000)));
+        producer.close(Duration.ofMillis(
+                nonNegativeRemainingMillis(deadlineNanos, POST_REAUTH_CLOSE_TIMEOUT_MS)));
     }
 
     private static void closeWithinDeadline(
             KafkaConsumer<String, String> consumer, long deadlineNanos) {
-        consumer.close(Duration.ofMillis(nonNegativeRemainingMillis(deadlineNanos, 5_000)));
+        consumer.close(Duration.ofMillis(
+                nonNegativeRemainingMillis(deadlineNanos, POST_REAUTH_CLOSE_TIMEOUT_MS)));
     }
 
     private static long nonNegativeRemainingMillis(long deadlineNanos, long operationLimitMs) {
@@ -559,14 +600,19 @@ class KafkaOAuthBrokerIT {
     }
 
     private static void logWaitStart(
-            String caseName, long timeoutMs, long deadlineEpochMs, long scheduledReauthEpochMs) {
+            String caseName,
+            long timeoutMs,
+            long deadlineEpochMs,
+            long scheduledReauthEpochMs,
+            long reservedPostReauthMs) {
         System.out.printf(
                 "kafka-it reauth case=%s state=waiting effectiveTimeoutMs=%d "
-                        + "scheduledReauthEpochMs=%d deadlineEpochMs=%d%n",
+                        + "scheduledReauthEpochMs=%d deadlineEpochMs=%d reservedPostReauthMs=%d%n",
                 caseName,
                 timeoutMs,
                 scheduledReauthEpochMs,
-                deadlineEpochMs);
+                deadlineEpochMs,
+                reservedPostReauthMs);
     }
 
     private static long boundedDeadline(long deadlineNanos, long operationLimitMs) {

@@ -1,10 +1,13 @@
 package edu.smarttraffic.kafkasecurity;
 
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.EXPECTED_REAUTH_INTERVAL_MS;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.POST_REAUTH_RESERVE_MS;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.TOPIC_CHECK_TIMEOUT_MS;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.eventsSince;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.forRenewal;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.readTokenAudit;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.requestIds;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.verificationDeadlineNanos;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,6 +21,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -68,6 +73,7 @@ class KafkaOAuthReauthSupportTest {
                 caseStartNanos,
                 token,
                 EXPECTED_REAUTH_INTERVAL_MS,
+                POST_REAUTH_RESERVE_MS,
                 nowNanos,
                 nowEpochMs);
 
@@ -77,7 +83,7 @@ class KafkaOAuthReauthSupportTest {
     }
 
     @Test
-    void renewalDeadlineNeverExceedsTheSixMinuteCaseLimit() {
+    void renewalDeadlineReservesPostSendAndTopicVerificationWithinTheSixMinuteLimit() {
         TokenAuditEvent token = tokenIssuedAt(1_000, 1_300);
         long caseStartNanos = 0;
         long nowNanos = 30_000_000_000L;
@@ -88,13 +94,46 @@ class KafkaOAuthReauthSupportTest {
                 caseStartNanos,
                 token,
                 EXPECTED_REAUTH_INTERVAL_MS,
+                POST_REAUTH_RESERVE_MS,
                 nowNanos,
                 nowEpochMs);
 
-        assertEquals(360_000_000_000L, deadline.deadlineNanos());
-        assertEquals(1_330_000L, deadline.deadlineEpochMs());
-        assertTrue(deadline.deadlineNanos() - caseStartNanos
-                <= java.util.concurrent.TimeUnit.MINUTES.toNanos(6));
+        long caseDeadlineNanos = TimeUnit.MINUTES.toNanos(6);
+        assertEquals(caseDeadlineNanos - TimeUnit.MILLISECONDS.toNanos(POST_REAUTH_RESERVE_MS),
+                deadline.deadlineNanos());
+        assertEquals(1_295_000L, deadline.deadlineEpochMs());
+        assertEquals(POST_REAUTH_RESERVE_MS, deadline.reservedPostReauthMs());
+    }
+
+    @Test
+    void topicVerificationGetsItsOwnBudgetWithinTheCaseDeadline() throws Exception {
+        long nowNanos = TimeUnit.SECONDS.toNanos(325);
+        long caseDeadlineNanos = TimeUnit.MINUTES.toNanos(6);
+
+        long verificationDeadline =
+                verificationDeadlineNanos(caseDeadlineNanos, nowNanos, TOPIC_CHECK_TIMEOUT_MS);
+
+        assertEquals(
+                nowNanos + TimeUnit.MILLISECONDS.toNanos(TOPIC_CHECK_TIMEOUT_MS),
+                verificationDeadline);
+        assertTrue(verificationDeadline < caseDeadlineNanos);
+        assertEquals(
+                caseDeadlineNanos,
+                verificationDeadlineNanos(
+                        caseDeadlineNanos,
+                        caseDeadlineNanos - TimeUnit.SECONDS.toNanos(5),
+                        TOPIC_CHECK_TIMEOUT_MS));
+    }
+
+    @Test
+    void topicVerificationRejectsAnAlreadyExpiredCaseDeadline() {
+        long nowNanos = TimeUnit.SECONDS.toNanos(326);
+        long expiredCaseDeadlineNanos = TimeUnit.SECONDS.toNanos(325);
+
+        assertThrows(
+                TimeoutException.class,
+                () -> verificationDeadlineNanos(
+                        expiredCaseDeadlineNanos, nowNanos, TOPIC_CHECK_TIMEOUT_MS));
     }
 
     @Test
@@ -103,7 +142,8 @@ class KafkaOAuthReauthSupportTest {
 
         assertThrows(
                 IllegalArgumentException.class,
-                () -> forRenewal("positive", 0, token, 300_000, 0, 1_000_000));
+                () -> forRenewal(
+                        "positive", 0, token, 300_000, POST_REAUTH_RESERVE_MS, 0, 1_000_000));
     }
 
     private static String auditLine(
