@@ -24,13 +24,21 @@ them to Git.
 | `KAFKA_SSL_TRUSTSTORE_PASSWORD` | No | External truststore password; only valid when a truststore path is supplied. |
 | `KAFKA_SSL_TRUSTSTORE_TYPE` | No | Truststore type, for example `PKCS12`. |
 
-The client sends its credentials to the token endpoint through Strimzi's OAuth
-login callback. It does not send an audience request parameter: Auth Server
-currently configures audiences per client. For this approved local-cluster
-stage, each of the three OAuth clients must be configured by the team to receive
-the `smarttraffic-kafka` audience. The broker must validate the configured
-issuer and audience as well as the JWT signature using the Auth Server JWKS
-endpoint. Token and JWKS URLs must use HTTPS.
+Each application authenticates to the HTTPS token endpoint using its own
+registered client ID and secret; the simulator, processor, and archiver must
+not share a client identity. The Auth Server currently assigns audiences per
+registered client, so the applications do not send a separate audience request
+parameter. Instead, configure each application client to receive tokens whose
+`aud` is `smarttraffic-kafka`.
+
+The broker listener's `oauth.client.id=smarttraffic-kafka`, with audience
+checking enabled, identifies the Kafka resource/audience expected in incoming
+tokens. It is not a replacement for an application's client ID. The
+inter-broker client likewise keeps its own registered OAuth identity in the
+external `KafkaClient` JAAS configuration and must receive a token with
+`aud=smarttraffic-kafka`. The broker validates issuer, audience, and JWT
+signature using the Auth Server JWKS endpoint. Token and JWKS URLs must use
+HTTPS.
 
 Scopes may be added to tokens, but the Kafka broker does not use them as the
 resource authorization policy. The effective authorization is the broker's
@@ -62,8 +70,9 @@ receive `CREATE`. The Streams ACLs and any additional `DESCRIBE` or cluster
 permissions must be confirmed by an integration test; they are not claimed as
 verified here. Broker-side topic auto-creation should also be disabled.
 
-These ACLs are a request for Héctor to coordinate and apply in the broker PR;
-this change does not modify Docker, Compose, listener settings, or ACL state.
+The listener/audience arrangement is currently being tested by Héctor. These
+ACLs are a request for him to coordinate and apply in the broker PR; this
+change does not modify Docker, Compose, listener settings, or ACL state.
 
 ## Token expiry and reauthentication
 
@@ -173,7 +182,7 @@ it is not yet demonstrated against the broker.
 
 ## Latest execution status
 
-Checked on 2026-11-12 at 19:24 local time:
+Checked on 2026-11-12 at 19:50 local time:
 
 - Docker is now available (`docker` 28.5.1, Compose 2.40.3). The earlier check
   at 17:26 failed because the `dockerDesktopLinuxEngine` named pipe was
@@ -186,9 +195,7 @@ Checked on 2026-11-12 at 19:24 local time:
 - `mvn -pl services/auth-server test`: `BUILD SUCCESS`, 8 tests, 0 failures,
   0 errors, 0 skipped, including the JWT `token_type` claim assertion.
 - `mvn -pl shared/kafka-security -Pkafka-it -DskipTests test`: `BUILD SUCCESS`;
-  this compiled the profile configuration but intentionally skipped the tests.
-- `mvn -pl shared/kafka-security -Pkafka-it -DskipTests test`: `BUILD SUCCESS`;
-  the integration test source compiled, but tests were intentionally skipped.
+  this compiled the profile configuration but intentionally skipped tests.
 - `mvn -pl shared/kafka-security -Pkafka-it test`: `BUILD SUCCESS`, 5 unit
   tests passed. This does not run the Failsafe integration test.
 - Héctor's initial broker attempt exited because its test JWKS endpoint was
@@ -208,6 +215,11 @@ Checked on 2026-11-12 at 19:24 local time:
   `Token validation failed: Token type not set`. Strimzi requires JWT payload
   `typ` or `token_type` equal to `Bearer`; the Auth Server correction and
   claim assertion described above have been added but still need testing.
+- Héctor is testing a single listener with
+  `oauth.client.id=smarttraffic-kafka` as the expected audience/resource ID.
+  Application clients retain their individual OAuth client IDs and must be
+  configured in Auth Server to receive `aud=smarttraffic-kafka`. The result
+  of Héctor's test is pending; this is not a validated integration.
 - Héctor reported `connections.max.reauth.ms=0`. Forced reauthentication on
   token expiry is disabled and remains explicitly pending; no expiry
   reauthentication test has been run.
