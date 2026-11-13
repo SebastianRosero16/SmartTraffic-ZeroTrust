@@ -51,6 +51,9 @@
                             <includes>
                                 <include>**/*IT.java</include>
                             </includes>
+                            <forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>
+                            <reportsDirectory>${java.io.tmpdir}/smarttraffic-kafka-it/${env.KAFKA_IT_RUN_ID}-${maven.build.timestamp}/failsafe-reports</reportsDirectory>
+                            <redirectTestOutputToFile>true</redirectTestOutputToFile>
                         </configuration>
                     </plugin>
                 </plugins>

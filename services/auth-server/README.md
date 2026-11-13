@@ -32,6 +32,22 @@ production, mount it read-only from a secret store and serve the token and JWKS
 endpoints over TLS. The service rejects RSA keys smaller than 2048 bits and
 cryptographically verifies the public/private key pair during startup.
 
+## Isolated Kafka reauthentication test instrumentation
+
+The optional `smarttraffic.auth.test.audit-path`,
+`smarttraffic.auth.test.rejection-marker-path`, and
+`smarttraffic.auth.test.rejected-client-id` properties are only for an isolated
+integration-test Auth Server. When enabled, the token endpoint writes a
+sanitized audit record containing request sequence, timestamp, client ID,
+HTTP status, and the issued token's `iat`/`exp` claims. It never writes the
+JWT, response body, or client secret. Once the marker file exists, only the
+configured test client receives HTTP 401; other clients, including the
+interbroker identity, continue through normal authorization.
+
+Use unique marker and audit paths outside Git for every run, shared between
+the Auth Server and `kafka-it`, and preserve them for review. These settings
+are unset by default and must not be enabled on a production Auth Server.
+
 Spring Authorization Server validates registered clients and requested scopes.
 The JWT `aud` claim is configured per client; this module does not yet select
 separate Kafka and RabbitMQ audiences per token request. The team must agree

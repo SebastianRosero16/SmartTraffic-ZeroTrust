@@ -93,13 +93,14 @@ change does not modify Docker, Compose, listener settings, or ACL state.
 ## Token expiry and reauthentication
 
 An authenticated Kafka connection can outlive the JWT used at its initial
-SASL exchange. Héctor reported `connections.max.reauth.ms=0`, which disables
-forced reauthentication; expiration of a JWT therefore does not prove that an
-already-authenticated connection is closed. This behavior is **pending**:
-coordinate a positive broker value no greater than the actual Auth Server
-access-token lifetime, then test that a live connection reauthenticates with a
-fresh token (or fails closed when it cannot) after token expiry. Neither the
-broker setting nor the reauthentication test is changed/claimed in this PR.
+SASL exchange. The published broker configuration still has
+`connections.max.reauth.ms=0`; this PR does not change it. The draft
+integration test now has separate positive and fail-closed cases that use one
+producer/connection each. They must be run only after Héctor confirms the
+effective local listener value and the Auth Server's observed token TTL.
+The agreed local trial uses a 300-second token and a candidate
+`connections.max.reauth.ms=240000`; these are test-environment values, not a
+production or PR #14 configuration change.
 
 ## Tests and pending integration checks
 
@@ -142,9 +143,11 @@ profile additionally requires:
 | `KAFKA_IT_INVALID_JWT_FILE` | Absolute path to a malformed or untrusted JWT file. |
 | `KAFKA_IT_WRONG_ISSUER_JWT_FILE` | Absolute path to a validly signed token with only the issuer claim incorrect. |
 | `KAFKA_IT_WRONG_AUDIENCE_JWT_FILE` | Absolute path to a validly signed token with only the audience incorrect. |
-| `KAFKA_IT_REAUTH_WAIT_MS` | Temporary wait covering the configured token TTL and refresh window. |
-| `KAFKA_IT_REAUTH_MARKER_FILE` | Temporary marker path that arms token rejection after the initial publish. |
-| `KAFKA_IT_TOKEN_AUDIT_FILE` | Temporary path for sanitized token-request audit records. |
+| `KAFKA_IT_REAUTH_INTERVAL_MS` | Effective positive listener reauthentication interval, confirmed from the running broker; use `240000` for the agreed local trial. |
+| `KAFKA_IT_RUN_ID` | Unique path-safe identifier for this one test execution; use a new value for every run. |
+| `KAFKA_IT_AUDIT_DIR` | Absolute local audit root outside the Git repository. The test stores evidence under a run-ID subdirectory. |
+| `KAFKA_IT_REAUTH_MARKER_FILE` | Unique path under the run-ID directory, shared with the Auth Server; the test creates it only after the control publish. |
+| `KAFKA_IT_TOKEN_AUDIT_FILE` | Unique path under the run-ID directory, shared with the Auth Server for sanitized HTTP status and token `iat`/`exp` metadata. |
 | `KAFKA_IT_ADMIN_CLIENT_ID` | Administrative OAuth client used only to verify topic contents. |
 | `KAFKA_IT_ADMIN_CLIENT_SECRET` | Secret for the administrative verification client, injected locally. |
 
@@ -173,31 +176,63 @@ the topic ACL is effective.
 
 The profile does not start Docker Compose or Auth Server. It is safe to invoke
 only after those external services, TLS trust material, test identities, topic,
-and ACLs are ready. The profile does not test expiration/reauthentication; with
-the reported `connections.max.reauth.ms=0`, the broker currently does not
-force it. Add a separate expiry case with an Auth Server-issued short-lived
-token after the broker is configured to require reauthentication.
-
-Héctor reported a successful local `kafka-it` run (5 unit tests and 1
-integration test) with a healthy broker and accessible Auth Server/JWKS. His
-run used an Auth Server HTTPS truststore supplied through a local client
-configuration. That report predates the truststore support now added here and
-does not independently verify this branch's environment-to-JAAS mapping.
-Passing unit tests do not prove client authentication, ACLs, or forced
-reauthentication against the broker.
-
-The temporary negative reauthentication case uses the real Strimzi OAuth
-callback. After the initial publish, the Auth Server's opt-in test endpoint
-filter returns HTTP 401 only for the configured application client once the
-marker exists; interbroker requests remain enabled. The filter records only a
-counter, timestamp, client ID, and HTTP status. The test allows Kafka's normal
-reconnection attempts, then requires a failed reauthentication, a failed
-post-expiry publish, and absence of the unique value when read with an
-independent administrative consumer. Configure the filter through
+ACLs, and unique audit paths are ready. The Auth Server's test-only audit
+properties must point to the same token-audit and marker files supplied to the
+test:
 `smarttraffic.auth.test.audit-path`,
 `smarttraffic.auth.test.rejection-marker-path`, and
-`smarttraffic.auth.test.rejected-client-id` only in an isolated test
-environment; these properties are unset by default.
+`smarttraffic.auth.test.rejected-client-id`. Use these only in an isolated
+test Auth Server and configure the rejected client as the simulator identity.
+Keep the production token TTL unchanged; provide the agreed 300-second TTL
+only through the local Auth Server test configuration.
+
+Héctor reported a successful run of the existing OAuth/ACL integration at
+SHA `3c13bc330d0125fe67702c9f1fcb1d89467dc657`, using separate broker and Auth
+Server HTTPS truststores. That run covered the allowed publish, authentication
+rejections, and ACL denial, but did not exercise token-expiry
+reauthentication. The newly added reauthentication cases still require one
+separate run against the exact PR head; unit tests do not prove their broker
+behavior.
+
+The reauthentication cases use the real Strimzi OAuth callback and keep the
+same producer open. The positive case waits for both HTTP 200 on renewal and an
+increase in the producer's `successful-reauthentication-total`, then confirms
+a later send and reads its unique value with the administrative consumer. The
+negative case creates the rejection marker only after the initial 200 control
+token and publish. It waits for HTTP 401 for renewal and an increase in
+`failed-reauthentication-total`, then requires the later send to fail and the
+unique value to be absent from the topic. Kafka reconnection attempts remain
+enabled; all observed simulator-client token requests after the marker must
+return 401, while interbroker and administrative identities are not rejected.
+
+The test records token `iat` and `exp` from the locally issued JWT without
+writing the JWT or response body. It derives the signal deadline from the
+observed expiry and configured effective reauthentication interval, caps each
+case at six minutes, and never waits past 60 seconds after `exp`. Polling uses
+`System.nanoTime()` and bounded intervals, not a fixed sleep. It logs the
+effective timeout and monotonic elapsed time. Failsafe kills a stuck test
+process after 900 seconds.
+
+Set `KAFKA_IT_RUN_ID` to a new identifier and retain the complete run
+directory, including the Auth Server token audit, rejection marker, and
+case-specific TSV audits, as well as the unique Failsafe XML and redirected
+test log under the operating-system temporary directory, until Héctor reviews
+them. The Auth Server audit includes only sequence, timestamp,
+client ID, status, and token `iat`/`exp`; it never includes a JWT, response
+body, or secret. The test refuses to delete or overwrite prior audit files or
+markers. No reauthentication result is claimed until Héctor runs this exact
+PR head once and reviews the preserved evidence.
+
+Local validation of this test update:
+
+- `mvn -pl services/auth-server clean test`: 10 tests passed, including two
+  focused tests for sanitized token auditing and marker-triggered HTTP 401.
+- `mvn -pl shared/kafka-security clean test`: 6 unit tests passed.
+- `mvn -pl shared/kafka-security -Pkafka-it -DskipTests test`: `BUILD
+  SUCCESS`; the profile's test sources compile, but broker tests were skipped.
+- The `kafka-it` profile was not run here. The exact updated PR head still
+  requires Héctor's single agreed run; no success or rejection result is
+  claimed for token-expiry reauthentication.
 
 ## JWT access-token type investigation
 

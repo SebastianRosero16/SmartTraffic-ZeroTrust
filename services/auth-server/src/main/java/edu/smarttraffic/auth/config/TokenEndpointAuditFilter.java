@@ -10,14 +10,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Base64;
-import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.web.util.ContentCachingResponseWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 final class TokenEndpointAuditFilter extends OncePerRequestFilter {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     private final Path auditPath;
     private final Path rejectionMarkerPath;
     private final String rejectedClientId;
-    private final AtomicInteger requestCount = new AtomicInteger();
+    private int requestCount;
 
     TokenEndpointAuditFilter(AuthServerProperties.TestEndpoint properties) {
         auditPath = properties.getAuditPath();
@@ -40,24 +44,65 @@ final class TokenEndpointAuditFilter extends OncePerRequestFilter {
                 && Files.exists(rejectionMarkerPath)
                 && rejectedClientId != null
                 && rejectedClientId.equals(clientId);
-        if (reject) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        } else {
-            filterChain.doFilter(request, response);
+        ContentCachingResponseWrapper cachedResponse = new ContentCachingResponseWrapper(response);
+        try {
+            if (reject) {
+                cachedResponse.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            } else {
+                filterChain.doFilter(request, cachedResponse);
+            }
+            TokenTimes tokenTimes = tokenTimes(cachedResponse);
+            record(clientId, cachedResponse.getStatus(), tokenTimes);
+        } finally {
+            cachedResponse.copyBodyToResponse();
         }
-        record(requestCount.incrementAndGet(), clientId, response.getStatus());
     }
 
-    private void record(int count, String clientId, int status) throws IOException {
+    private TokenTimes tokenTimes(ContentCachingResponseWrapper response) throws IOException {
+        if (response.getStatus() != HttpServletResponse.SC_OK) {
+            return null;
+        }
+
+        JsonNode tokenResponse = OBJECT_MAPPER.readTree(response.getContentAsByteArray());
+        String accessToken = tokenResponse.path("access_token").asText();
+        String[] parts = accessToken.split("\\.", -1);
+        if (parts.length != 3 || parts[1].isBlank()) {
+            throw new IOException("Successful token response did not contain a JWT access token");
+        }
+
+        JsonNode claims = OBJECT_MAPPER.readTree(Base64.getUrlDecoder().decode(parts[1]));
+        JsonNode issuedAt = claims.get("iat");
+        JsonNode expiresAt = claims.get("exp");
+        if (issuedAt == null || !issuedAt.isIntegralNumber()
+                || expiresAt == null || !expiresAt.isIntegralNumber()
+                || expiresAt.longValue() <= issuedAt.longValue()) {
+            throw new IOException("JWT access token did not contain valid iat and exp claims");
+        }
+        return new TokenTimes(issuedAt.longValue(), expiresAt.longValue());
+    }
+
+    private synchronized void record(String clientId, int status, TokenTimes tokenTimes)
+            throws IOException {
+        int count = ++requestCount;
         Path parent = auditPath.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
         }
-        String safeClientId = clientId == null ? "<missing>" : clientId;
+        String safeClientId = clientId != null && clientId.matches("[A-Za-z0-9._-]{1,128}")
+                ? clientId
+                : "<missing-or-invalid>";
+        StringBuilder line = new StringBuilder()
+                .append("sequence=").append(count)
+                .append('\t').append("time=").append(Instant.now())
+                .append('\t').append("clientId=").append(safeClientId)
+                .append('\t').append("status=").append(status);
+        if (tokenTimes != null) {
+            line.append('\t').append("iatEpochSeconds=").append(tokenTimes.issuedAtEpochSeconds())
+                    .append('\t').append("expEpochSeconds=").append(tokenTimes.expiresAtEpochSeconds());
+        }
         Files.writeString(
                 auditPath,
-                count + " time=" + Instant.now() + " clientId=" + safeClientId
-                        + " status=" + status + System.lineSeparator(),
+                line.append(System.lineSeparator()).toString(),
                 java.nio.file.StandardOpenOption.CREATE,
                 java.nio.file.StandardOpenOption.APPEND);
     }
@@ -81,4 +126,6 @@ final class TokenEndpointAuditFilter extends OncePerRequestFilter {
             return null;
         }
     }
+
+    private record TokenTimes(long issuedAtEpochSeconds, long expiresAtEpochSeconds) {}
 }
