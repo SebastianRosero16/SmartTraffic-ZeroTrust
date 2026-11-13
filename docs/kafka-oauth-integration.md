@@ -145,8 +145,9 @@ forced reauthentication. If Héctor enables that setting, add a separate
 expiry/reauthentication case using an Auth Server-issued short-lived token
 before treating expiry behavior as verified.
 
-No successful broker integration has been demonstrated. Passing unit tests do
-not prove broker-side JWT validation, ACLs, or forced reauthentication.
+No successful client-side `kafka-it` integration has been demonstrated.
+Passing unit tests do not prove client authentication, ACLs, or forced
+reauthentication against the broker.
 
 ## Inter-broker principal claim investigation
 
@@ -175,20 +176,23 @@ for the registered broker client. Keep `sub` as the identity claim and retain
 signature, issuer, audience, TLS, and ACL validation; do not relax OAuth to
 bypass the error.
 
-This diagnosis is still pending a repeat run with the corrected effective
-broker configuration. During that run, verify the broker client identity and
-principal without logging or sharing the token. Do not mark the integration
-successful until inter-broker authentication and an authorized client
-operation both succeed.
+Héctor subsequently reported in PR #14 that the broker reached KRaft healthy,
+loaded JWKS, completed inter-broker OAuth login with the broker client's
+principal, and kept controller TLS/mTLS private. Treat the `sub` failure as
+resolved for that reported broker startup, not as evidence that client-side
+`kafka-it` has passed. Do not log or share tokens. The authorized client
+operation and all negative cases still need verification by `kafka-it`.
 
 ## Latest execution status
 
-Checked on 2026-11-12 at 17:58 local time:
+Checked on 2026-11-12 at 18:54 local time:
 
 - Docker is now available (`docker` 28.5.1, Compose 2.40.3). The earlier check
   at 17:26 failed because the `dockerDesktopLinuxEngine` named pipe was
   unavailable; the daemon was activated afterward.
-- `docker ps -a` showed no Kafka container running or available locally.
+- `docker ps` on Steven's machine shows no Kafka container (only an unrelated
+  MongoDB container). Docker is available here, but the broker and Auth
+  Server/JWKS runtime configuration are on Héctor's environment.
 - `mvn test`: `BUILD SUCCESS`, 46 tests, 0 failures, 0 errors, 0 skipped.
 - `mvn package`: `BUILD SUCCESS`, 46 tests, 0 failures, 0 errors, 0 skipped.
 - `mvn -pl shared/kafka-security -Pkafka-it -DskipTests test`: `BUILD SUCCESS`;
@@ -204,12 +208,15 @@ Checked on 2026-11-12 at 17:58 local time:
   authentication with `No principal name in JWT claim: sub`. Temporary
   resources and secrets were cleaned up. This is a reproduced failure, not a
   successful authentication test.
+- After commit `ea55248` in PR #14, Héctor reported a successful local broker
+  startup: Compose valid, KRaft healthy, JWKS loaded, inter-broker OAuth login
+  using the broker client principal, and private controller TLS/mTLS. This
+  report does not include execution of this module's `kafka-it` profile.
 - No reachable broker address, Auth Server token/JWKS URLs, TLS trust material,
   test client credentials, or provisioned test ACLs are available in this
   workspace. No credentials, tokens, or certificates were requested or added.
-- Consequently, Steven did not execute a broker connection or
-  token/issuer/audience/ACL/expiry rejection test in this workspace. There are
-  no end-to-end pass results to report.
+- Consequently, Steven did not execute the profile from this machine, and no
+  authorized-client or rejection results for `kafka-it` are available yet.
 
 To unblock a reproducible run, Héctor needs to provide the non-secret runtime
 parameters: broker host and TLS client port, certificate host/SAN and the
@@ -217,6 +224,7 @@ local truststore arrangement, Auth Server token and JWKS endpoints plus issuer,
 approved audience, ACL principal mapping/status, token lifetime, and
 `connections.max.reauth.ms`. Test credentials and certificate files must be
 injected locally from a protected source, never posted in the PR or committed.
-The exact service/client identities, corrected listener-scoped inter-broker
-callback, and issuance of the validly signed wrong-issuer/wrong-audience test
-tokens must also be coordinated before the profile can run.
+The host-side run must use the local-access Compose override, the approved
+`traffic_readings` topic and audience, and the authorized/ACL-denied test
+clients. The validly signed wrong-issuer/wrong-audience test tokens must be
+prepared for that test environment before the profile can run.
