@@ -26,16 +26,15 @@ not enabled or packaged in this cut.
 - TLS keystore/truststore files placed outside Git under the directory selected
   by `TLS_SECRETS_DIR`, with their passwords supplied only through the local
   environment. Do not commit credentials or certificates.
-- External values for the listener-scoped OAuth client ID, secret, and token
-  endpoint. They are supplied through the local environment and must not be
-  committed.
+- An external `KafkaClient` JAAS file, selected by `KAFKA_CLIENT_JAAS_FILE`,
+  containing the inter-broker client's credentials when that file is used by
+  the local runtime. It must not be committed.
 - An Auth Server reachable at `OAUTH_JWKS_ENDPOINT`, with the configured
-  issuer matching `OAUTH_ISSUER_URI`, a broker client ID in
-  `OAUTH_KAFKA_CLIENT_ID`, and an approved Kafka audience in
-  `OAUTH_KAFKA_AUDIENCE`. The broker client ID is the OAuth resource-server
-  client used for audience validation; the inter-broker client credentials use
-  `OAUTH_KAFKA_CLIENT_ID`, `OAUTH_KAFKA_CLIENT_SECRET`, and
-  `OAUTH_TOKEN_ENDPOINT`.
+  issuer matching `OAUTH_ISSUER_URI`, and an approved Kafka audience in
+  `OAUTH_KAFKA_AUDIENCE`. For this single-listener test, the approved
+  `smarttraffic-kafka` value is also the listener OAuth client ID,
+  inter-broker client ID, and audience; application clients must continue
+  using their own IDs.
 
 The Compose file does not publish ports by default. Its client listener uses
 `SASL_SSL` with `OAUTHBEARER`; the KRaft controller listener uses `SSL`.
@@ -43,8 +42,9 @@ The controller listener binds only to container loopback and requires mutual
 TLS. The broker
 authorizer denies operations without a matching ACL. Listener and
 controller ports, the JWKS endpoint, issuer, broker client ID, Kafka audience,
-TLS file names/types, passwords, and superuser principal must be
-supplied locally, including the TLS client-auth mode. No credentials,
+TLS file names/types, passwords, OAuth client secret/token endpoint, external
+JAAS file, and superuser principal must be supplied locally, including the TLS
+client-auth mode. No credentials,
 certificates, ports, or JWKS host are committed as defaults.
 
 The named `vm-data-private` bridge network is not exposed to the host. It is

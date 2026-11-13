@@ -29,7 +29,7 @@ services:
         oauth.jwks.endpoint.uri="${OAUTH_JWKS_ENDPOINT}"
         oauth.valid.issuer.uri="${OAUTH_ISSUER_URI}"
         oauth.check.audience="true"
-        oauth.client.id="${OAUTH_KAFKA_CLIENT_ID}"
+        oauth.client.id="${OAUTH_KAFKA_AUDIENCE}"
         oauth.client.secret="${OAUTH_KAFKA_CLIENT_SECRET}"
         oauth.token.endpoint.uri="${OAUTH_TOKEN_ENDPOINT}";
       KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_SERVER_CALLBACK_HANDLER_CLASS: "io.strimzi.kafka.oauth.server.JaasServerOauthValidatorCallbackHandler"
