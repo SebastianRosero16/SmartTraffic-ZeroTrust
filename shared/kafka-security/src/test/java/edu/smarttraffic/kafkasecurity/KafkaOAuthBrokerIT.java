@@ -10,6 +10,7 @@ import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.eventsSince
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.forRenewal;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.newCaseLimit;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.requestIds;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.successfulRenewalResponseBeforeExpiry;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.verificationDeadlineNanos;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -159,6 +160,7 @@ class KafkaOAuthBrokerIT {
                 Set<String> requestsBeforeRenewal = requestIds(reauthRun.tokenAuditPath);
                 awaitReauthentication(
                         producer,
+                        initialToken,
                         reauthRun.tokenAuditPath,
                         clientId,
                         requestsBeforeRenewal,
@@ -236,6 +238,7 @@ class KafkaOAuthBrokerIT {
                 audit.record("rejection-armed", "status=ready");
                 awaitReauthentication(
                         producer,
+                        initialToken,
                         reauthRun.tokenAuditPath,
                         clientId,
                         requestsBeforeRenewal,
@@ -448,6 +451,7 @@ class KafkaOAuthBrokerIT {
 
     private static void awaitReauthentication(
             KafkaProducer<String, String> producer,
+            TokenAuditEvent initialToken,
             Path tokenAuditPath,
             String clientId,
             Set<String> knownRequestIds,
@@ -474,6 +478,7 @@ class KafkaOAuthBrokerIT {
                 "metric=" + metricName,
                 "metricBaseline=" + metricBefore);
 
+        boolean successfulResponseValidated = expectedStatus != 200;
         while (System.nanoTime() < deadline.deadlineNanos()) {
             List<TokenAuditEvent> allNewEvents = eventsSince(tokenAuditPath, knownRequestIds, clientId);
             List<TokenAuditEvent> renewalEvents = allNewEvents.stream()
@@ -493,8 +498,25 @@ class KafkaOAuthBrokerIT {
                         "Unexpected rejection decision during reauthentication");
             }
 
+            if (!successfulResponseValidated && !renewalEvents.isEmpty()) {
+                TokenAuditEvent renewalEvent = renewalEvents.get(0);
+                assertTrue(
+                        successfulRenewalResponseBeforeExpiry(renewalEvent, initialToken),
+                        "HTTP 200 token renewal must be recorded before the initial token expires; "
+                                + "responseRecordedAt=" + renewalEvent.responseRecordedAt()
+                                + "; expEpochSeconds=" + initialToken.expiresAtEpochSeconds());
+                audit.record(
+                        "renewal-http-response",
+                        "httpStatus=200",
+                        "requestId=" + renewalEvent.requestId(),
+                        "responseRecordedAt=" + renewalEvent.responseRecordedAt(),
+                        "initialTokenExpEpochSeconds=" + initialToken.expiresAtEpochSeconds(),
+                        "beforeExp=true");
+                successfulResponseValidated = true;
+            }
+
             double observedMetric = metric(producer, metricName);
-            if (!renewalEvents.isEmpty() && observedMetric > metricBefore) {
+            if (successfulResponseValidated && !renewalEvents.isEmpty() && observedMetric > metricBefore) {
                 long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
                 audit.record(
                         "reauthentication-observed",

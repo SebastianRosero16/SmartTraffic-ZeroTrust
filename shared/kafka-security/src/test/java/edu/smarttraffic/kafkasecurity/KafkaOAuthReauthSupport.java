@@ -5,6 +5,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -65,6 +67,7 @@ final class KafkaOAuthReauthSupport {
 
             events.add(new TokenAuditEvent(
                     requestId,
+                    parseInstant(fields, "time"),
                     required(fields, "clientId"),
                     parseInt(fields, "status"),
                     parseBoolean(fields, "rejectionArmed"),
@@ -73,6 +76,13 @@ final class KafkaOAuthReauthSupport {
                     optionalLong(fields, "expEpochSeconds")));
         }
         return events;
+    }
+
+    static boolean successfulRenewalResponseBeforeExpiry(
+            TokenAuditEvent renewalEvent, TokenAuditEvent initialToken) {
+        return renewalEvent.status() == 200
+                && renewalEvent.responseRecordedAt()
+                        .isBefore(Instant.ofEpochSecond(initialToken.expiresAtEpochSeconds()));
     }
 
     static Set<String> requestIds(Path path) throws IOException {
@@ -206,6 +216,14 @@ final class KafkaOAuthReauthSupport {
         return Boolean.parseBoolean(value);
     }
 
+    private static Instant parseInstant(Map<String, String> fields, String name) throws IOException {
+        try {
+            return Instant.parse(required(fields, name));
+        } catch (DateTimeParseException exception) {
+            throw new IOException("Token audit contains an invalid " + name, exception);
+        }
+    }
+
     private static long optionalLong(Map<String, String> fields, String name) throws IOException {
         String value = fields.get(name);
         if (value == null) {
@@ -220,6 +238,7 @@ final class KafkaOAuthReauthSupport {
 
     record TokenAuditEvent(
             String requestId,
+            Instant responseRecordedAt,
             String clientId,
             int status,
             boolean rejectionArmed,

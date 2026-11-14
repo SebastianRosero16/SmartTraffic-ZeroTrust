@@ -190,20 +190,36 @@ Héctor reported a successful run of the existing OAuth/ACL integration at
 SHA `3c13bc330d0125fe67702c9f1fcb1d89467dc657`, using separate broker and Auth
 Server HTTPS truststores. That run covered the allowed publish, authentication
 rejections, and ACL denial, but did not exercise token-expiry
-reauthentication. The newly added reauthentication cases still require one
-separate run against the exact PR head; unit tests do not prove their broker
-behavior.
+reauthentication.
+
+Héctor later reported a sanitized manual run of the reauthentication cases
+against SHA `79a5aa36665564152b3edeb53c6ecc61b8a94d64`, with a 300-second
+token TTL and the broker's effective `connections.max.reauth.ms=240000`.
+Both cases passed. In the positive case, the token endpoint returned HTTP 200
+at `2026-11-13T23:55:54.842Z`, before the original token's `exp` at
+`2026-11-13T23:56:53Z`. The producer's
+`successful-reauthentication-total` increment was observed later, at
+`2026-11-13T23:56:56.053Z`; that later metric observation does not mean the
+renewal response happened after expiry. The subsequent send was acknowledged
+and its value was found in the topic. In the negative case, the post-marker
+request received HTTP 401, the failed-reauthentication metric increased, the
+send failed, and the rejected value was absent through the captured end
+offsets. This is a manual report, not a GitHub check, and applies to the SHA
+listed above; it does not validate follow-up test-code changes.
 
 The reauthentication cases use the real Strimzi OAuth callback and keep the
-same producer open. The positive case waits for both HTTP 200 on renewal and an
-increase in the producer's `successful-reauthentication-total`, then confirms
-a later send and reads its unique value with the administrative consumer. The
-negative case creates the rejection marker only after the initial 200 control
-token and publish. It waits for HTTP 401 for renewal and an increase in
-`failed-reauthentication-total`, then requires the later send to fail and the
-unique value to be absent from the topic. Kafka reconnection attempts remain
-enabled; all observed simulator-client token requests after the marker must
-return 401, while interbroker and administrative identities are not rejected.
+same producer open. The positive case requires the HTTP 200 renewal response
+to be recorded before the original token's `exp`. It then separately waits
+for an increase in the producer's `successful-reauthentication-total`; that
+metric may be observed after `exp` and is not required to increment before it.
+The case then confirms a later send and reads its unique value with the
+administrative consumer. The negative case creates the rejection marker only
+after the initial 200 control token and publish. It waits for HTTP 401 for
+renewal and an increase in `failed-reauthentication-total`, then requires the
+later send to fail and the unique value to be absent from the topic. Kafka
+reconnection attempts remain enabled; all observed simulator-client token
+requests after the marker must return 401, while interbroker and
+administrative identities are not rejected.
 
 The test records token `iat` and `exp` from the locally issued JWT without
 writing the JWT or response body. It derives the signal deadline from the
@@ -217,7 +233,10 @@ of `exp + 60 s` and the case deadline minus that reserve. Preserving the full
 not increase the agreed six-minute case limit. Polling uses `System.nanoTime()`
 and bounded intervals, not a fixed sleep. It logs the scheduled
 reauthentication time, effective deadline, reserve, and monotonic elapsed
-time. Failsafe kills a stuck test process after 900 seconds.
+time. The positive-case assertion compares the audited HTTP response time
+with the initial token's `exp`; the `exp + 60 s` deadline only bounds how long
+the test waits for signals and does not permit a post-expiry HTTP 200 to pass.
+Failsafe kills a stuck test process after 900 seconds.
 
 Administrative verification has its own deadline, starts before constructing
 the consumer, and is clamped to the remaining case time. It scans assigned

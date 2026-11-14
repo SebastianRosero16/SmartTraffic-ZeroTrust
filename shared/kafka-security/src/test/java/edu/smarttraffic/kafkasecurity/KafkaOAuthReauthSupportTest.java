@@ -7,8 +7,10 @@ import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.eventsSince
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.forRenewal;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.readTokenAudit;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.requestIds;
+import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.successfulRenewalResponseBeforeExpiry;
 import static edu.smarttraffic.kafkasecurity.KafkaOAuthReauthSupport.verificationDeadlineNanos;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,6 +20,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -46,6 +49,7 @@ class KafkaOAuthReauthSupportTest {
 
         assertEquals(1, newEvents.size());
         assertEquals(newId, newEvents.get(0).requestId());
+        assertEquals(Instant.parse("2026-11-13T21:00:00Z"), newEvents.get(0).responseRecordedAt());
         assertTrue(newEvents.get(0).rejectionArmed());
         assertTrue(newEvents.get(0).rejectionApplied());
         assertEquals(Set.of(priorId, newId), requestIds(audit));
@@ -59,6 +63,24 @@ class KafkaOAuthReauthSupportTest {
         Files.writeString(audit, line + System.lineSeparator() + line + System.lineSeparator());
 
         assertThrows(IOException.class, () -> readTokenAudit(audit));
+    }
+
+    @Test
+    void requiresSuccessfulRenewalResponseToBeStrictlyBeforeInitialTokenExpiry() {
+        TokenAuditEvent initialToken = tokenIssuedAt(1_000, 1_300);
+
+        assertTrue(successfulRenewalResponseBeforeExpiry(
+                tokenEvent(200, Instant.ofEpochSecond(1_299, 999_000_000)),
+                initialToken));
+        assertFalse(successfulRenewalResponseBeforeExpiry(
+                tokenEvent(200, Instant.ofEpochSecond(1_300)),
+                initialToken));
+        assertFalse(successfulRenewalResponseBeforeExpiry(
+                tokenEvent(200, Instant.ofEpochSecond(1_300, 1)),
+                initialToken));
+        assertFalse(successfulRenewalResponseBeforeExpiry(
+                tokenEvent(401, Instant.ofEpochSecond(1_299)),
+                initialToken));
     }
 
     @Test
@@ -160,11 +182,24 @@ class KafkaOAuthReauthSupportTest {
     private static TokenAuditEvent tokenIssuedAt(long issuedAt, long expiresAt) {
         return new TokenAuditEvent(
                 UUID.randomUUID().toString(),
+                Instant.ofEpochSecond(issuedAt),
                 "simulator-client",
                 200,
                 false,
                 false,
                 issuedAt,
                 expiresAt);
+    }
+
+    private static TokenAuditEvent tokenEvent(int status, Instant responseRecordedAt) {
+        return new TokenAuditEvent(
+                UUID.randomUUID().toString(),
+                responseRecordedAt,
+                "simulator-client",
+                status,
+                false,
+                false,
+                -1,
+                -1);
     }
 }
