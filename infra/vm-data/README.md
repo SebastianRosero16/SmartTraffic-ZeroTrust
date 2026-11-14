@@ -77,10 +77,10 @@ docker run --rm --entrypoint /opt/kafka/bin/kafka-storage.sh `
 ```
 
 Fill the remaining required values in `.env`, provide the external JAAS and
-TLS files, and ensure the Auth Server is reachable. Steven still needs to
-provide/approve the OAuth client settings, token claims, ACL principals, and
-Auth Server endpoint/certificate details before the full OAuth flow can be
-tested. Do not substitute permissive listeners to bypass these requirements.
+TLS files, and ensure the Auth Server is reachable. The full flow requires
+approved OAuth client settings, token claims, ACL principals, and Auth Server
+endpoint/certificate details. Do not substitute permissive listeners to bypass
+these requirements.
 
 Start the broker without publishing a host port:
 
@@ -148,7 +148,28 @@ external HTTPS Auth Server/JWKS:
 - The controller listener used TLS with mutual authentication and remained
   private; no host ports were published.
 
-This evidence does not cover client authentication or ACL behavior. The
-`kafka-it` profile must still be run with Steven's approved client matrix.
-The result is not considered end-to-end OAuth validation until that test
-covers the allowed and rejected client cases.
+The manual reauthentication validation completed on 2026-11-14 against
+`kafka-it` code from PR #15 at
+`cd8ff4d1b34698587d09c64fd280d9180b42c34`, using the candidate broker
+configuration from PR #14 at
+`29e0f79fb4527ea3aea1ec640d9b8bc65f61fd8c`:
+
+- The broker started healthy from the temporary image tag
+  `smarttraffic/kafka-oauth:4.4.0-oauth-0.18.1-reauth-test`. Its build used the
+  same tracked `Dockerfile`, `kafka-oauth/pom.xml`, and base `compose.yaml` as
+  the PR #14 revision; a temporary Compose override selected the test image
+  tag and test TLS setup. This confirms startup of that temporary build for
+  this run, not a CI check or a separate deployment.
+- The observed token TTL was 300 seconds and the effective broker setting was
+  `connections.max.reauth.ms=240000`.
+- Failsafe ran the two reauthentication cases: 2 tests, 0 failures, 0 errors.
+- Positive case: renewal returned HTTP 200 before token expiration,
+  `successful-reauthentication-total` increased from 0 to 1, and the
+  publication was confirmed and found in the topic.
+- Negative case: after the rejection marker was armed, renewal returned HTTP
+  401 and `failed-reauthentication-total` increased. Publication was not
+  confirmed; the consumer traversed the captured offsets and did not find the
+  rejected record ID.
+- This was a manual run, not a GitHub Actions check. The positive HTTP 200
+  occurred about 48 seconds before `exp`; 60 full seconds after `exp` were not
+  tested.
