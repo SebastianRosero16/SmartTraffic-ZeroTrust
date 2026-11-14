@@ -1,0 +1,89 @@
+name: smarttraffic-vm-data
+
+services:
+  kafka:
+    image: smarttraffic/kafka-oauth:4.4.0-oauth-0.18.1
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: kafka
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: "${KAFKA_CLUSTER_ID:?Set KAFKA_CLUSTER_ID in .env}"
+      CLIENT_PORT: "${CLIENT_PORT:?Set CLIENT_PORT in .env}"
+      CONTROLLER_PORT: "${CONTROLLER_PORT:?Set CONTROLLER_PORT in .env}"
+      OAUTH_JWKS_ENDPOINT: "${OAUTH_JWKS_ENDPOINT:?Set OAUTH_JWKS_ENDPOINT in .env}"
+      OAUTH_ISSUER_URI: "${OAUTH_ISSUER_URI:?Set OAUTH_ISSUER_URI in .env}"
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:${CONTROLLER_PORT:?Set CONTROLLER_PORT in .env}"
+      KAFKA_LISTENERS: "CLIENT://0.0.0.0:${CLIENT_PORT:?Set CLIENT_PORT in .env},CONTROLLER://127.0.0.1:${CONTROLLER_PORT:?Set CONTROLLER_PORT in .env}"
+      KAFKA_ADVERTISED_LISTENERS: "CLIENT://kafka:${CLIENT_PORT:?Set CLIENT_PORT in .env}"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_SSL,CONTROLLER:SSL"
+      KAFKA_LISTENER_NAME_CONTROLLER_SSL_CLIENT_AUTH: "required"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "CLIENT"
+      KAFKA_CONNECTIONS_MAX_REAUTH_MS: "240000"
+      KAFKA_SASL_ENABLED_MECHANISMS: "OAUTHBEARER"
+      KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required
+        oauth.jwks.endpoint.uri="${OAUTH_JWKS_ENDPOINT}"
+        oauth.valid.issuer.uri="${OAUTH_ISSUER_URI}"
+        oauth.check.audience="true"
+        oauth.client.id="${OAUTH_KAFKA_AUDIENCE}"
+        oauth.client.secret="${OAUTH_KAFKA_CLIENT_SECRET}"
+        oauth.token.endpoint.uri="${OAUTH_TOKEN_ENDPOINT}";
+      KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_SERVER_CALLBACK_HANDLER_CLASS: "io.strimzi.kafka.oauth.server.JaasServerOauthValidatorCallbackHandler"
+      KAFKA_PRINCIPAL_BUILDER_CLASS: "io.strimzi.kafka.oauth.server.OAuthKafkaPrincipalBuilder"
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: "OAUTHBEARER"
+      KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_LOGIN_CALLBACK_HANDLER_CLASS: "io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/tmp/kafka-client-jaas.conf"
+      KAFKA_AUTHORIZER_CLASS_NAME: "org.apache.kafka.metadata.authorizer.StandardAuthorizer"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+      KAFKA_SUPER_USERS: "${KAFKA_SUPER_USERS:?Set approved KAFKA_SUPER_USERS in .env}"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "1"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_SSL_CLIENT_AUTH: "${TLS_CLIENT_AUTH:?Set TLS_CLIENT_AUTH in .env}"
+      KAFKA_SSL_KEYSTORE_LOCATION: "/etc/kafka/secrets/${TLS_KEYSTORE_FILENAME:?Set TLS_KEYSTORE_FILENAME in .env}"
+      KAFKA_SSL_KEYSTORE_PASSWORD: "${TLS_KEYSTORE_PASSWORD:?Set TLS_KEYSTORE_PASSWORD in .env}"
+      KAFKA_SSL_KEY_PASSWORD: "${TLS_KEY_PASSWORD:?Set TLS_KEY_PASSWORD in .env}"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: "/etc/kafka/secrets/${TLS_TRUSTSTORE_FILENAME:?Set TLS_TRUSTSTORE_FILENAME in .env}"
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: "${TLS_TRUSTSTORE_PASSWORD:?Set TLS_TRUSTSTORE_PASSWORD in .env}"
+      KAFKA_SSL_KEYSTORE_TYPE: "${TLS_KEYSTORE_TYPE:?Set TLS_KEYSTORE_TYPE in .env}"
+      KAFKA_SSL_TRUSTSTORE_TYPE: "${TLS_TRUSTSTORE_TYPE:?Set TLS_TRUSTSTORE_TYPE in .env}"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - type: bind
+        source: "${TLS_SECRETS_DIR:?Set TLS_SECRETS_DIR in .env}"
+        target: /etc/kafka/secrets
+        read_only: true
+      - type: bind
+        source: "${KAFKA_CLIENT_JAAS_FILE:?Set KAFKA_CLIENT_JAAS_FILE in .env}"
+        target: /tmp/kafka-client-jaas.conf
+        read_only: true
+    networks:
+      - vm-data-private
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -ec 'exec 3<>/dev/tcp/127.0.0.1/$${CLIENT_PORT}'
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+networks:
+  vm-data-private:
+    driver: bridge
+
+volumes:
+  kafka-data:

@@ -37,6 +37,11 @@ services/auth-server/**/*.jks
 services/auth-server/.env
 services/auth-server/**/.env
 
+# Local vm-data OAuth/TLS configuration and persisted broker data
+infra/vm-data/.env
+infra/vm-data/secrets/
+infra/vm-data/data/
+
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
