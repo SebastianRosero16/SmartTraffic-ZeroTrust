@@ -10,6 +10,7 @@ import java.util.UUID;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
@@ -26,6 +27,16 @@ import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 public class AuthorizationServerConfiguration {
+    @Bean
+    FilterRegistrationBean<TokenEndpointAuditFilter> tokenEndpointAuditFilter(
+            AuthServerProperties properties) {
+        FilterRegistrationBean<TokenEndpointAuditFilter> registration = new FilterRegistrationBean<>(
+                new TokenEndpointAuditFilter(properties.getTest()));
+        registration.addUrlPatterns("/oauth2/token");
+        registration.setOrder(-100);
+        return registration;
+    }
+
     @Bean
     @Order(1)
     SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http) throws Exception {
@@ -82,6 +93,7 @@ public class AuthorizationServerConfiguration {
                 }
                 context.getClaims().audience(client.getAudiences());
                 context.getClaims().id(UUID.randomUUID().toString());
+                context.getClaims().claim("token_type", "Bearer");
                 context.getJwsHeader()
                         .algorithm(SignatureAlgorithm.RS256)
                         .keyId(properties.getKeyId());

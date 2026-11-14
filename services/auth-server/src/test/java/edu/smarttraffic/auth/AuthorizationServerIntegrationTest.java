@@ -101,6 +101,7 @@ class AuthorizationServerIntegrationTest {
         assertEquals(ISSUER, claims.getIssuer());
         assertEquals("sensor-client", claims.getSubject());
         assertEquals("urn:smarttraffic:kafka", claims.getAudience().get(0));
+        assertEquals("Bearer", claims.getStringClaim("token_type"));
         assertEquals("traffic.readings.publish", claims.getStringListClaim("scope").get(0));
         assertNotNull(claims.getIssueTime());
         assertNotNull(claims.getExpirationTime());
