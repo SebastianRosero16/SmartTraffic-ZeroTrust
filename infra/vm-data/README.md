@@ -47,6 +47,11 @@ JAAS file, and superuser principal must be supplied locally, including the TLS
 client-auth mode. No credentials,
 certificates, ports, or JWKS host are committed as defaults.
 
+The broker sets `connections.max.reauth.ms` to `240000` (4 minutes). Validate
+OAuth reauthentication against the Auth Server's 300-second token lifetime,
+including successful and rejected renewals, with separate client and broker
+truststores before deployment.
+
 The named `vm-data-private` bridge network is not exposed to the host. It is
 not marked `internal: true`, because the broker must be able to initiate an
 outbound connection to the separately deployed Auth Server for JWKS retrieval.
