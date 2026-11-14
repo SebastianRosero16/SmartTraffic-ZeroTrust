@@ -192,20 +192,26 @@ Server HTTPS truststores. That run covered the allowed publish, authentication
 rejections, and ACL denial, but did not exercise token-expiry
 reauthentication.
 
-Héctor later reported a sanitized manual run of the reauthentication cases
-against SHA `79a5aa36665564152b3edeb53c6ecc61b8a94d64`, with a 300-second
-token TTL and the broker's effective `connections.max.reauth.ms=240000`.
-Both cases passed. In the positive case, the token endpoint returned HTTP 200
-at `2026-11-13T23:55:54.842Z`, before the original token's `exp` at
-`2026-11-13T23:56:53Z`. The producer's
-`successful-reauthentication-total` increment was observed later, at
-`2026-11-13T23:56:56.053Z`; that later metric observation does not mean the
-renewal response happened after expiry. The subsequent send was acknowledged
-and its value was found in the topic. In the negative case, the post-marker
-request received HTTP 401, the failed-reauthentication metric increased, the
-send failed, and the rejected value was absent through the captured end
-offsets. This is a manual report, not a GitHub check, and applies to the SHA
-listed above; it does not validate follow-up test-code changes.
+Héctor later reported a sanitized manual Failsafe run of the reauthentication
+cases against code SHA `cd8ff4d1b34698587d09c64fd280d9180b42c34c`, using broker
+configuration SHA `29e0f79fb4527ea3aea1ec640d9b8bc65f61fd8c`. The observed token
+TTL was 300 seconds and the effective `connections.max.reauth.ms` was
+240000 ms. Both cases passed (2 tests, 0 failures, 0 errors).
+
+In the positive case, the original token expired at `2026-11-14T05:52:59Z`;
+the token endpoint returned HTTP 200 at `05:52:10.898Z`, 48.1 seconds before
+`exp`. The successful-reauthentication metric increased from 0 to 1, the
+subsequent publish was confirmed, and the consumer found the value. In the
+negative case, the rejection marker was armed at `05:53:03.529Z`; the later
+token request received HTTP 401 at `05:57:16.122Z`. The failed metric increased
+from 0 to 1 (and reached 2 on rejected retries), the publish was not
+acknowledged, and the consumer did not find the rejected ID through the
+captured end offsets.
+
+This was a manual run, not a GitHub check. It did not test the full 60-second
+post-expiry grace. The documentation-only follow-up records evidence for code
+SHA `cd8ff4d1b34698587d09c64fd280d9180b42c34c`; it does not change that code,
+and the integration was not rerun for the documentation commit.
 
 The reauthentication cases use the real Strimzi OAuth callback and keep the
 same producer open. The positive case requires the HTTP 200 renewal response
