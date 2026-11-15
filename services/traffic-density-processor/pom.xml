@@ -12,9 +12,14 @@
     </parent>
 
     <artifactId>traffic-density-processor</artifactId>
-    <name>SmartTraffic Density Processor Domain</name>
+    <name>SmartTraffic Density Processor</name>
 
     <dependencies>
+        <dependency>
+            <groupId>com.rabbitmq</groupId>
+            <artifactId>amqp-client</artifactId>
+            <version>5.22.0</version>
+        </dependency>
         <dependency>
             <groupId>edu.smarttraffic</groupId>
             <artifactId>traffic-contracts</artifactId>
@@ -26,8 +31,18 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
+            <groupId>edu.smarttraffic</groupId>
+            <artifactId>kafka-serialization</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-streams</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-streams-test-utils</artifactId>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

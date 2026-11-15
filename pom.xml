@@ -12,6 +12,7 @@
     <modules>
         <module>shared/traffic-contracts</module>
         <module>shared/kafka-security</module>
+        <module>shared/kafka-serialization</module>
         <module>services/auth-server</module>
         <module>services/traffic-density-processor</module>
         <module>services/traffic-archiver</module>
@@ -52,6 +53,11 @@
             <dependency>
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>kafka-streams</artifactId>
+                <version>${kafka.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.kafka</groupId>
+                <artifactId>kafka-streams-test-utils</artifactId>
                 <version>${kafka.version}</version>
             </dependency>
             <dependency>
