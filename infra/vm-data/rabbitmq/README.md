@@ -78,13 +78,15 @@ credentials; the broker had no host-published ports:
 - A reader authenticated, but an unauthorized queue declaration was denied
   with AMQP reply code `403 ACCESS_REFUSED`.
 - A connection without an OAuth token was rejected.
-- A token signed by the trusted test key with a different `iss` was accepted.
-  This confirms the known limitation for this test setup; it does not mean the
-  plugin validates issuer equality.
+- On the 2026-11-15 rerun at commit `270efc1ccc27ccb9992ba65539faf70dc3902b24`,
+  a token signed by the trusted test key with a different `iss` was accepted.
+  Treat this as an observed risk for this fixture/configuration and run only;
+  it does not establish that every RabbitMQ/plugin configuration behaves the
+  same way or that issuer equality is validated.
 
-The last case is a residual limitation, not an equivalent substitute for
-issuer validation and not full RFC 9068 validation. Do not log or persist JWTs
-or secrets. These results validate only the isolated test fixture, not a
+This case is a residual limitation, not an equivalent substitute for issuer
+validation and not full RFC 9068 validation. Do not log or persist JWTs or
+secrets. These results validate only the isolated test fixture, not a
 production deployment.
 
 ## Production decisions still pending
