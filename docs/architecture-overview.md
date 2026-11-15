@@ -31,6 +31,13 @@ despliegues por VM evita proponer una única red Docker plana que conecte
 indiscriminadamente todas las zonas. La topología concreta de redes y archivos
 Compose se detallará durante la implementación.
 
+El backend y la interfaz del dashboard ya implementan el consumo RabbitMQ y la
+entrega por WebSocket, pero ese recorrido no se ha validado conectado a un
+broker. La cola `dashboard_updates_queue` y el endpoint `/ws/traffic` son
+valores provisionales de desarrollo; la topología y los permisos definitivos
+siguen pendientes. Los requisitos de ejecución están en el
+[README del backend](../services/user-dashboard-backend/README.md).
+
 ## Responsabilidades de los servicios
 
 - **`auth_server`:** autenticar los servicios y emitir JWT, según el requisito.

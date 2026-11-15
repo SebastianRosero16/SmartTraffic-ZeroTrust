@@ -2,7 +2,7 @@
 
 Proyecto final del ejercicio 12 para las asignaturas de Sistemas Distribuidos, Sistemas Operativos y Programación Orientada a Objetos. SmartTraffic propone una arquitectura distribuida para simular lecturas de sensores de tráfico, calcular el nivel de congestión por zona, distribuir actualizaciones y alertas, responder consultas y conservar un histórico.
 
-> **Estado:** implementación parcial. El flujo local simulador → Kafka → Kafka Streams → RabbitMQ pasó una prueba end-to-end con brokers aislados. Esto no significa que el despliegue completo esté integrado: dashboard, alertas, consultas, VMs y reglas de red siguen pendientes.
+> **Estado:** implementación parcial. El flujo local simulador → Kafka → Kafka Streams → RabbitMQ pasó una prueba end-to-end con brokers aislados. El backend y la interfaz del dashboard ya implementan el tramo RabbitMQ → WebSocket, pero aún no se han validado juntos con un broker; la cola y la ruta WebSocket son provisionales. Alertas, consultas, VMs y reglas de red siguen pendientes.
 
 ## Contexto y problema
 
@@ -195,7 +195,7 @@ Las responsabilidades son iniciales y no reemplazan la revisión cruzada: el equ
 
 ## Estado y etapas previstas
 
-El simulador publica lecturas JSON en Kafka con la configuración OAuth compartida. La topología del procesador cuenta con pruebas `TopologyTestDriver` y su flujo con el simulador y RabbitMQ se validó localmente con brokers aislados; el resultado y sus límites están documentados en el [README del procesador](services/traffic-density-processor/README.md). La validación manual de reautenticación Kafka está descrita en la guía de integración y no equivale a una prueba end-to-end de todos los servicios. El archivador tiene pruebas automatizadas, pero aún no se ha validado en ese ensayo contra un broker y una base de datos reales. Las VMs, reglas `nftables`, dashboard, alertas y consultas siguen pendientes.
+El simulador publica lecturas JSON en Kafka con la configuración OAuth compartida. La topología del procesador cuenta con pruebas `TopologyTestDriver` y su flujo con el simulador y RabbitMQ se validó localmente con brokers aislados; el resultado y sus límites están documentados en el [README del procesador](services/traffic-density-processor/README.md). La validación manual de reautenticación Kafka está descrita en la guía de integración y no equivale a una prueba end-to-end de todos los servicios. El archivador tiene pruebas automatizadas, pero aún no se ha validado en ese ensayo contra un broker y una base de datos reales. El backend y la interfaz del dashboard están implementados en código, pero su integración RabbitMQ/WebSocket no está probada contra un broker; los valores de cola y endpoint siguen siendo provisionales (ver [README del backend](services/user-dashboard-backend/README.md)). Las VMs, reglas `nftables`, alertas y consultas siguen pendientes.
 
 Etapas previstas:
 
