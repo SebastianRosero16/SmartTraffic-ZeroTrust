@@ -2,7 +2,7 @@
 
 Proyecto final del ejercicio 12 para las asignaturas de Sistemas Distribuidos, Sistemas Operativos y Programación Orientada a Objetos. SmartTraffic propone una arquitectura distribuida para simular lecturas de sensores de tráfico, calcular el nivel de congestión por zona, distribuir actualizaciones y alertas, responder consultas y conservar un histórico.
 
-> **Estado:** fase inicial de desarrollo. Este documento describe la arquitectura propuesta de acuerdo con el enunciado; los componentes y flujos descritos aún no se consideran implementados ni verificados.
+> **Estado:** implementación parcial. El flujo local simulador → Kafka → Kafka Streams → RabbitMQ pasó una prueba end-to-end con brokers aislados. Esto no significa que el despliegue completo esté integrado: dashboard, alertas, consultas, VMs y reglas de red siguen pendientes.
 
 ## Contexto y problema
 
@@ -195,7 +195,7 @@ Las responsabilidades son iniciales y no reemplazan la revisión cruzada: el equ
 
 ## Estado y etapas previstas
 
-La integración de seguridad cliente para Kafka está en implementación inicial y cuenta con pruebas unitarias aisladas. Los adaptadores de los servicios, la configuración del broker y las pruebas end-to-end aún no se han implementado ni validado.
+El simulador publica lecturas JSON en Kafka con la configuración OAuth compartida. La topología del procesador cuenta con pruebas `TopologyTestDriver` y su flujo con el simulador y RabbitMQ se validó localmente con brokers aislados; el resultado y sus límites están documentados en el [README del procesador](services/traffic-density-processor/README.md). La validación manual de reautenticación Kafka está descrita en la guía de integración y no equivale a una prueba end-to-end de todos los servicios. El archivador tiene pruebas automatizadas, pero aún no se ha validado en ese ensayo contra un broker y una base de datos reales. Las VMs, reglas `nftables`, dashboard, alertas y consultas siguen pendientes.
 
 Etapas previstas:
 

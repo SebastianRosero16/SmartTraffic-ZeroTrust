@@ -22,6 +22,17 @@ class AverageDensityStrategyTest {
     }
 
     @Test
+    void calculatesAverageFromWindowAggregateCounts() {
+        assertEquals(5.0, strategy.calculate(10, 2));
+    }
+
+    @Test
+    void rejectsInvalidWindowAggregateCounts() {
+        assertThrows(IllegalArgumentException.class, () -> strategy.calculate(-1, 2));
+        assertThrows(IllegalArgumentException.class, () -> strategy.calculate(1, 0));
+    }
+
+    @Test
     void rejectsMissingInputs() {
         assertThrows(IllegalArgumentException.class, () -> strategy.calculate(null, evaluatedAt));
         assertThrows(IllegalArgumentException.class, () -> strategy.calculate(List.of(), evaluatedAt));

@@ -79,12 +79,14 @@ resource access; no service receives topic `CREATE` permission.
 | `<processor-client-id>` | Kafka Streams internal topics | Only the required `READ`, `WRITE`, and `DESCRIBE` on the approved application-ID prefix; `IDEMPOTENT_WRITE` on the cluster if its producer uses idempotence |
 
 The topic `traffic_readings` must be provisioned by an administrative identity.
-Kafka Streams internal-topic names depend on the topology, which is not yet
-implemented. Once that topology is agreed, an administrator must provision its
-changelog/repartition topics before startup if service identities are not to
-receive `CREATE`. The Streams ACLs and any additional `DESCRIBE` or cluster
-permissions must be confirmed by an integration test; they are not claimed as
-verified here. Broker-side topic auto-creation should also be disabled.
+The implemented Kafka Streams topology re-keys readings by zone and aggregates
+them in event-time windows. Its changelog and repartition topic names depend on
+the application ID and topology. Before startup, an administrator must inspect
+the topology and provision the required internal topics if service identities
+are not to receive `CREATE`. The Streams ACLs and any additional `DESCRIBE` or
+cluster permissions must be confirmed by an integration test; they are not
+claimed as verified here. Broker-side topic auto-creation should also be
+disabled.
 
 The listener/audience arrangement is currently being tested by Héctor. These
 ACLs are a request for him to coordinate and apply in the broker PR; this

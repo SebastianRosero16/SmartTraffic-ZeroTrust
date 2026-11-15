@@ -24,8 +24,16 @@ public final class ZoneTrafficAggregate {
             ZoneId zoneId,
             TrafficThresholds thresholds,
             List<TrafficEventObserver> observers) {
+        this(zoneId, thresholds, observers, TrafficStatus.DESPEJADA);
+    }
+
+    public ZoneTrafficAggregate(
+            ZoneId zoneId,
+            TrafficThresholds thresholds,
+            List<TrafficEventObserver> observers,
+            TrafficStatus initialStatus) {
         this.zoneId = Objects.requireNonNull(zoneId, "Zone ID is required");
-        this.stateMachine = new ZoneTrafficStateMachine(thresholds);
+        this.stateMachine = new ZoneTrafficStateMachine(thresholds, initialStatus);
         this.observers = List.copyOf(Objects.requireNonNull(observers, "Observers are required"));
     }
 
@@ -59,6 +67,11 @@ public final class ZoneTrafficAggregate {
         }
 
         double densityValue = strategy.calculate(readings, evaluatedAt);
+        return processAggregate(vehicleCount, densityValue, evaluatedAt);
+    }
+
+    public TrafficStatus processAggregate(int vehicleCount, double densityValue, Instant evaluatedAt) {
+        Objects.requireNonNull(evaluatedAt, "Evaluation time is required");
         TrafficMetrics nextMetrics = new TrafficMetrics(vehicleCount, densityValue);
         TrafficStatus previousStatus = stateMachine.currentStatus();
         TrafficStatus nextStatus = stateMachine.updateDensity(densityValue);
