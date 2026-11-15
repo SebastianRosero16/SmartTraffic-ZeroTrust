@@ -12,11 +12,13 @@
     <modules>
         <module>shared/traffic-contracts</module>
         <module>shared/kafka-security</module>
+        <module>shared/rabbitmq-security</module>
         <module>shared/kafka-serialization</module>
         <module>services/auth-server</module>
         <module>services/traffic-density-processor</module>
         <module>services/traffic-archiver</module>
         <module>services/traffic-sensor-simulator</module>
+        <module>services/user-dashboard-backend</module>
     </modules>
 
     <properties>
@@ -27,6 +29,7 @@
         <spring-boot.version>3.4.1</spring-boot.version>
         <kafka.version>4.4.0</kafka.version>
         <strimzi-kafka-oauth.version>0.18.1</strimzi-kafka-oauth.version>
+        <rabbitmq-client.version>5.22.0</rabbitmq-client.version>
     </properties>
 
     <dependencyManagement>
@@ -64,6 +67,11 @@
                 <groupId>io.strimzi</groupId>
                 <artifactId>kafka-oauth-client</artifactId>
                 <version>${strimzi-kafka-oauth.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.rabbitmq</groupId>
+                <artifactId>amqp-client</artifactId>
+                <version>${rabbitmq-client.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
