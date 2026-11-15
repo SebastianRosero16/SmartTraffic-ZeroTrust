@@ -1,0 +1,11 @@
+aws_region                       = ""
+enable_resource_creation         = false
+cost_review_confirmed            = false
+availability_zone                = ""
+vpc_cidr                         = ""
+subnet_cidrs                     = {}
+instance_types                   = {}
+root_volume_sizes_gib            = {}
+network_rules                    = []
+allow_private_peer_ipv4_cidrs    = false
+approved_private_peer_ipv4_cidrs = []
