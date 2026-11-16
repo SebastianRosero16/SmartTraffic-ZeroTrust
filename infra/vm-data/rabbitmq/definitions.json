@@ -31,13 +31,6 @@
       "durable": true,
       "auto_delete": false,
       "arguments": {}
-    },
-    {
-      "name": "query-replies-it",
-      "vhost": "smarttraffic-it",
-      "durable": true,
-      "auto_delete": false,
-      "arguments": {}
     }
   ],
   "exchanges": [
@@ -75,14 +68,6 @@
       "destination": "alert-updates-it",
       "destination_type": "queue",
       "routing_key": "",
-      "arguments": {}
-    },
-    {
-      "source": "query-answers-it",
-      "vhost": "smarttraffic-it",
-      "destination": "query-replies-it",
-      "destination_type": "queue",
-      "routing_key": "client-it",
       "arguments": {}
     }
   ]

@@ -47,8 +47,9 @@ infra/vm-data/data/
 **/.env.*
 !**/.env.example
 
-# Local deployment secrets
+# Local deployment secrets and persisted data
 infra/**/secrets/
+infra/**/data/
 
 # Terraform state, plans, caches, and local variables
 **/.terraform/
