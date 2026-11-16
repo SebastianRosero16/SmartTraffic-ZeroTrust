@@ -1,11 +1,28 @@
-aws_region                       = ""
+aws_region                       = "us-east-1"
 enable_resource_creation         = false
 cost_review_confirmed            = false
 availability_zone                = ""
 vpc_cidr                         = ""
 subnet_cidrs                     = {}
-instance_types                   = {}
-root_volume_sizes_gib            = {}
+instance_types = {
+  vm-auth   = "t3.small"
+  vm-data   = "t3.large"
+  vm-ingest = "t3.small"
+  vm-core   = "t3.medium"
+  vm-app    = "t3.small"
+}
+root_volume_sizes_gib = {
+  vm-auth   = 20
+  vm-data   = 30
+  vm-ingest = 20
+  vm-core   = 20
+  vm-app    = 20
+}
+data_volume_sizes_gib = {
+  postgres = 30
+  kafka    = 20
+  rabbitmq = 10
+}
 network_rules                    = []
 allow_private_peer_ipv4_cidrs    = false
 approved_private_peer_ipv4_cidrs = []

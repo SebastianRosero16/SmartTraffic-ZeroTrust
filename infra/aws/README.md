@@ -20,8 +20,19 @@ The Terraform module is deliberately disabled by default:
 - Enabling creation also requires `cost_review_confirmed = true`. This is a
   deliberate human gate, not a pricing guarantee or a substitute for checking
   the AWS account.
-- The module does not assign public IPv4 addresses, create internet routes, or
-  open inbound or outbound security-group rules by default.
+- The approved demonstration network uses one public subnet per VM in one
+  selected `us-east-1` Availability Zone, one Internet Gateway, and one public
+  route table. Each instance receives a dynamic public IPv4 address; no NAT
+  Gateway or Elastic IP is created.
+- Security Groups have no ingress rules by default. The only built-in egress
+  is TCP 443 to IPv4 Internet destinations for SSM, image downloads, and OS
+  updates. Security Groups cannot restrict destinations by DNS name, so this
+  is port-restricted but not FQDN-restricted. No SSH, dashboard, Kafka,
+  RabbitMQ, or PostgreSQL ingress from the Internet is configured.
+- The shared EC2 role attaches `AmazonSSMManagedInstanceCore` and is assigned
+  to all five instances through an instance profile. Héctor must still use an
+  appropriately scoped IAM identity; no user credentials or access keys are
+  stored in Terraform.
 - Security-group rules are managed only with the standalone ingress/egress
   rule resources. Do not add inline `ingress` or `egress` blocks to
   `aws_security_group`. The locked AWS Provider 5.100.0 removes AWS's default
@@ -35,9 +46,11 @@ The Terraform module is deliberately disabled by default:
   `allow_private_peer_ipv4_cidrs = true` and an exact
   `approved_private_peer_ipv4_cidrs` `/32` entry. This option is disabled by
   default and can never authorize an address inside the VPC or its subnets.
-- Instance types, EBS sizes, Availability Zone, VPC/subnet CIDRs, and every
-  network rule must be supplied explicitly. No AWS credentials, keys, or
-  account identifiers belong in this repository.
+- The preliminary minimum EC2 sizes and encrypted gp3 root/data-volume sizes
+  are set as defaults. The selected Availability Zone, VPC CIDR, and exactly
+  five non-overlapping subnet CIDRs must still be supplied after checking the
+  account and approving the address plan. No AWS credentials, keys, or account
+  identifiers belong in this repository.
 - When resource creation is enabled, the VPC CIDR must be a canonical private
   IPv4 range within AWS's supported `/16` through `/28` size. Each subnet CIDR
   must be canonical, within that VPC, use an AWS-supported size, and not
@@ -46,17 +59,83 @@ The Terraform module is deliberately disabled by default:
   policy and is more restrictive than AWS's general CIDR requirements.
 
 Do not enable resource creation until the account is confirmed to have access
-to EC2 and the actual account-specific cost of EC2, EBS, addresses, networking,
-and data transfer has been reviewed. The AWS Free Tier page and the earlier
-750-hour offer must not be assumed to apply to this account. The five EC2
-instances cannot be left running continuously under a shared 750-instance-hour
-allowance without exceeding it.
+to EC2 and the actual account-specific cost of EC2, EBS, public IPv4, networking,
+and data transfer has been reviewed. The US$100 credit is a one-time balance,
+not a monthly allowance. EBS eligibility is unconfirmed and is excluded from
+credit assumptions.
 
-The private-only network scaffold is not yet a complete runnable deployment:
-the team still needs to approve the communication matrix, a management and
-software-download path, and the corresponding AWS and `nftables` rules. Ansible
-configuration and application Compose deployment should be added only after
-those choices and the guest OS are confirmed.
+## Approved demonstration design
+
+- Region: `us-east-1`; exactly one account-available Availability Zone.
+- Five role-specific subnets and Security Groups: `vm-auth`, `vm-data`,
+  `vm-ingest`, `vm-core`, and `vm-app`.
+- Dynamic public IPv4 addresses and outbound Internet Gateway routing support
+  SSM, Docker image downloads, and OS updates. No NAT Gateway is needed.
+- Administration and dashboard presentation use Session Manager. Use
+  port-forwarding from Héctor's laptop after the backend's production port is
+  confirmed. No SSH or public dashboard ingress is configured.
+- VM-to-VM flows must use private addresses and role-scoped Security Groups.
+  Until production listeners and ports are approved, no application ingress
+  rules are created. Kafka, RabbitMQ, and PostgreSQL are never exposed to
+  Internet sources.
+- One AZ is a cost-conscious demo topology, not high availability. An AZ
+  outage interrupts every VM; the brokers and database are single-node and
+  have no cross-AZ failover.
+
+The source matrix is [docs/network-matrix.md](../../docs/network-matrix.md).
+Production ports are still unconfirmed: Auth token/JWKS listeners; Kafka client
+and broker/controller listeners; RabbitMQ AMQPS; PostgreSQL; and the dashboard
+HTTP/WebSocket listener. Values such as fixture ports `5671`, `5432`, `5433`,
+`8080`, and `9092`/`9093` are not approved production assignments. Do not add
+them to `network_rules` until the service owners confirm listeners, TLS names,
+and client-to-service flows. The required SSM egress port is TCP 443.
+
+## Compute, storage, and recovery
+
+The preliminary minimum Linux sizes are `t3.small` for `vm-auth`,
+`vm-ingest`, and `vm-app`; `t3.large` for `vm-data`; and `t3.medium` for
+`vm-core`. These are demo starting points, not load-tested production
+recommendations. `vm-data` hosts Kafka, RabbitMQ, and PostgreSQL together and
+is a single point of failure.
+
+All root volumes are encrypted gp3. `vm-data` also receives three separately
+managed, encrypted gp3 data volumes: PostgreSQL 30 GiB, Kafka 20 GiB, and
+RabbitMQ 10 GiB. EBS is billed while volumes exist even if EC2 is stopped.
+The data volumes use Terraform `prevent_destroy`; deliberate retention and
+recovery work is required before their removal.
+
+After confirming the attached EBS volume IDs, format a new data volume only
+once, identify it by NVMe serial/volume ID, and mount it by filesystem UUID.
+Suggested mount points are `/srv/smarttraffic/postgres`,
+`/srv/smarttraffic/kafka`, and `/srv/smarttraffic/rabbitmq`; Compose must bind
+each service's own data directory to its corresponding mount. Do not format a
+volume on every boot. Before replacing or terminating `vm-data`, stop the
+containers cleanly and verify a backup. Reattach a retained volume to a
+replacement instance in the same AZ; for recovery in another AZ, restore a
+snapshot into a new volume there. Snapshots and application-consistent
+PostgreSQL backups have separate storage costs, and restore procedures must be
+tested. This PR documents the procedure; it does not install Docker, mount
+disks, or configure Compose/Ansible.
+
+## Approximate costs
+
+Planning figures for one VM-hour per running instance in `us-east-1`, Linux
+On-Demand, excluding taxes and usage-based charges:
+
+- Five dynamic public IPv4 addresses: about US$4.33 for 173 hours or US$18.25
+  for 730 hours, using US$0.005 per address-hour.
+- The minimum EC2 mix above: about US$32.39 for 173 hours or US$136.66 for
+  730 hours, before any T3 surplus CPU-credit charges.
+- 170 GiB of gp3 volumes (110 GiB root plus 60 GiB data): about US$13.60 per
+  30-day month, including when instances are stopped.
+- Approximate combined subtotal: US$50.31 at 173 EC2 hours with a full-month
+  EBS allocation, or US$168.51 at 24/7. This excludes data transfer, snapshots,
+  CloudWatch/S3 logs, taxes, and other account-specific charges.
+
+These are estimates, not an AWS quote. Review current [EC2](https://aws.amazon.com/ec2/instance-types/t3/),
+[EBS](https://aws.amazon.com/ebs/pricing/), and
+[VPC](https://aws.amazon.com/vpc/pricing/) prices and the account's credit
+terms before enabling creation.
 
 ## Validation without AWS
 
@@ -75,4 +154,6 @@ reviews are approved. Terraform state and filled-in `.tfvars` files must remain
 local and must never be committed.
 
 The AWS mock tests verify planned Terraform configuration only. They do not
-contact AWS and cannot prove the live behavior of Security Groups.
+contact AWS and cannot prove live behavior, account service quotas, AZ
+availability, public-repository access, SSM registration, or application
+connectivity. No real Terraform plan or AWS operation is part of this PR.

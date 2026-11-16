@@ -7,6 +7,12 @@ locals {
     "vm-app",
   ])
 
+  data_volume_device_names = {
+    postgres = "/dev/sdf"
+    kafka    = "/dev/sdg"
+    rabbitmq = "/dev/sdh"
+  }
+
   rfc1918_ipv4_cidrs = [
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -182,6 +188,14 @@ resource "terraform_data" "deployment_guard" {
     }
 
     precondition {
+      condition = (
+        length(setsubtract(toset(["postgres", "kafka", "rabbitmq"]), toset(keys(var.data_volume_sizes_gib)))) == 0 &&
+        length(setsubtract(toset(keys(var.data_volume_sizes_gib)), toset(["postgres", "kafka", "rabbitmq"]))) == 0
+      )
+      error_message = "Provide separate data-volume sizes for PostgreSQL, Kafka, and RabbitMQ."
+    }
+
+    precondition {
       condition = alltrue([
         for index, rule in var.network_rules :
         rule.peer_ipv4_cidr == null || !local.rule_peer_in_configured_network[tostring(index)]
@@ -241,13 +255,53 @@ resource "aws_subnet" "vm" {
   vpc_id                  = aws_vpc.smarttraffic[0].id
   cidr_block              = each.value
   availability_zone       = var.availability_zone
-  map_public_ip_on_launch = false
+  map_public_ip_on_launch = true
 
   tags = {
     Name      = "smarttraffic-${each.key}"
+    Tier      = "public"
     Project   = "SmartTraffic"
     ManagedBy = "Terraform"
   }
+}
+
+resource "aws_internet_gateway" "smarttraffic" {
+  count = var.enable_resource_creation ? 1 : 0
+
+  vpc_id = aws_vpc.smarttraffic[0].id
+
+  tags = {
+    Name      = "smarttraffic-igw"
+    Project   = "SmartTraffic"
+    ManagedBy = "Terraform"
+  }
+}
+
+resource "aws_route_table" "public" {
+  count = var.enable_resource_creation ? 1 : 0
+
+  vpc_id = aws_vpc.smarttraffic[0].id
+
+  tags = {
+    Name      = "smarttraffic-public"
+    Project   = "SmartTraffic"
+    ManagedBy = "Terraform"
+  }
+}
+
+resource "aws_route" "internet" {
+  count = var.enable_resource_creation ? 1 : 0
+
+  route_table_id         = aws_route_table.public[0].id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.smarttraffic[0].id
+}
+
+resource "aws_route_table_association" "vm" {
+  for_each = var.enable_resource_creation ? var.subnet_cidrs : {}
+
+  subnet_id      = aws_subnet.vm[each.key].id
+  route_table_id = aws_route_table.public[0].id
 }
 
 resource "aws_security_group" "vm" {
@@ -262,6 +316,17 @@ resource "aws_security_group" "vm" {
     Project   = "SmartTraffic"
     ManagedBy = "Terraform"
   }
+}
+
+resource "aws_vpc_security_group_egress_rule" "https" {
+  for_each = var.enable_resource_creation ? { for role in local.vm_roles : role => role } : {}
+
+  security_group_id = aws_security_group.vm[each.key].id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  description       = "HTTPS egress for SSM, image downloads, and operating system updates."
 }
 
 resource "aws_vpc_security_group_ingress_rule" "approved" {
@@ -279,6 +344,48 @@ resource "aws_vpc_security_group_ingress_rule" "approved" {
     each.value.peer_role == null ? null : aws_security_group.vm[each.value.peer_role].id
   )
   description = each.value.description
+}
+
+resource "aws_iam_role" "ssm" {
+  count = var.enable_resource_creation ? 1 : 0
+
+  name = "smarttraffic-ec2-ssm"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = {
+    Name      = "smarttraffic-ec2-ssm"
+    Project   = "SmartTraffic"
+    ManagedBy = "Terraform"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ssm_core" {
+  count = var.enable_resource_creation ? 1 : 0
+
+  role       = aws_iam_role.ssm[0].name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "ssm" {
+  count = var.enable_resource_creation ? 1 : 0
+
+  name = "smarttraffic-ec2-ssm"
+  role = aws_iam_role.ssm[0].name
+
+  tags = {
+    Name      = "smarttraffic-ec2-ssm"
+    Project   = "SmartTraffic"
+    ManagedBy = "Terraform"
+  }
 }
 
 resource "aws_vpc_security_group_egress_rule" "approved" {
@@ -305,7 +412,8 @@ resource "aws_instance" "vm" {
   instance_type               = var.instance_types[each.key]
   subnet_id                   = aws_subnet.vm[each.key].id
   vpc_security_group_ids      = [aws_security_group.vm[each.key].id]
-  associate_public_ip_address = false
+  associate_public_ip_address = true
+  iam_instance_profile        = aws_iam_instance_profile.ssm[0].name
 
   root_block_device {
     volume_type           = "gp3"
@@ -327,6 +435,34 @@ resource "aws_instance" "vm" {
 
   depends_on = [
     terraform_data.deployment_guard,
+    aws_vpc_security_group_egress_rule.https,
     aws_vpc_security_group_egress_rule.approved,
   ]
+}
+
+resource "aws_ebs_volume" "data" {
+  for_each = var.enable_resource_creation ? var.data_volume_sizes_gib : {}
+
+  availability_zone = var.availability_zone
+  size              = each.value
+  type              = "gp3"
+  encrypted         = true
+
+  tags = {
+    Name      = "smarttraffic-data-${each.key}"
+    Project   = "SmartTraffic"
+    ManagedBy = "Terraform"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_volume_attachment" "data" {
+  for_each = var.enable_resource_creation ? var.data_volume_sizes_gib : {}
+
+  device_name = local.data_volume_device_names[each.key]
+  volume_id   = aws_ebs_volume.data[each.key].id
+  instance_id = aws_instance.vm["vm-data"].id
 }
