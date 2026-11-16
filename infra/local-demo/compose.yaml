@@ -324,7 +324,7 @@ services:
         smarttraffic-rabbitmq-it.write:smarttraffic-it/query-replies-it
         smarttraffic-rabbitmq-it.read:smarttraffic-it/query-replies-it
         smarttraffic-rabbitmq-it.read:smarttraffic-it/query-answers-it
-        smarttraffic-rabbitmq-it.write:smarttraffic-it/query-answers-it/client-it
+        smarttraffic-rabbitmq-it.read:smarttraffic-it/query-answers-it/client-it
       AUTH_TOKEN_ENDPOINT_URI: https://host.docker.internal:18443/oauth2/token
       AUTH_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
       RABBITMQ_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
