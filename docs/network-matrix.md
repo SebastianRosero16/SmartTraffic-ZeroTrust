@@ -27,22 +27,31 @@ solo lo son si el enunciado los fija.
 Auth, Kafka y RabbitMQ; Héctor aprobó los flujos lógicos, pero no la matriz
 completa como base de producción. Para la demostración se decidió `us-east-1`,
 una AZ, cinco subredes con IPv4 públicas dinámicas, administración por Session
-Manager y sin reglas de ingress público. El detalle de CIDR/AZ disponible,
-identidad IAM del portátil, inventario, dashboard forwarding y puertos de
-producción sigue pendiente. No derivar reglas de aplicación hasta aprobar
-listeners y flujos.
+Manager y port forwarding de Session Manager para el dashboard, sin SSH ni
+ingress público. Siguen pendientes los CIDR, la AZ disponible para la cuenta,
+la identidad IAM del portátil, el inventario y los listeners/puertos de
+producción.
+
+**Alcance actual de Terraform:** `network_rules` está vacío por defecto. La
+única regla de salida automática es TCP 443 para SSM, imágenes y actualizaciones;
+no hay reglas de ingress ni reglas de aplicación entre roles. Por tanto, la
+infraestructura actual todavía no habilita comunicación de aplicación entre
+las cinco VM. Se deberán añadir las reglas de ingress y egress para Auth,
+Kafka, RabbitMQ, PostgreSQL y el dashboard cuando se confirmen sus listeners,
+puertos y flujos iniciadores. Las filas de esta matriz describen requisitos
+lógicos; no significan que esos flujos ya estén habilitados.
 
 ## Disponibilidad de los servicios
 
-La base publicada compartida `develop` en `270efc1ccc27ccb9992ba65539faf70dc3902b24`
-no incluye `alert-dispatcher` ni `query-client`; Steven confirmó que tampoco
-están en su checkout limpio de esa base. Sus directorios y código aparecen
-como cambios locales sin seguimiento en este checkout de Sebastián. Por ello,
-los flujos de alertas y consultas describen trabajo local pendiente de
-revisión/publicación: no están disponibles al clonar `develop` ni se han
-validado con un broker. Las pruebas unitarias existentes en esa copia local no
-se ejecutaron durante esta revisión. Actualizar este estado cuando esos cambios
-se publiquen y revisen.
+Al verificar el HEAD remoto, `develop` apunta a
+`70f2266b2d7e3ff9a981837a492a9946f6032502`. Esa base publicada no incluye
+`alert-dispatcher` ni `query-client`; Steven confirmó que tampoco están en su
+checkout limpio de esa base. Sus directorios y código aparecen como cambios
+locales sin seguimiento en el checkout de Sebastián. Por ello, los flujos de
+alertas y consultas describen trabajo local pendiente de revisión/publicación:
+no están disponibles al clonar `develop` ni se han validado con un broker. Las
+pruebas unitarias existentes en esa copia local no se ejecutaron durante esta
+revisión. Actualizar este estado cuando esos cambios se publiquen y revisen.
 
 ## Flujos de aplicación
 
@@ -76,9 +85,6 @@ de producción.
 | RabbitMQ | Clientes configuran `RABBITMQ_HOST`/`RABBITMQ_PORT` y usan AMQPS, validando certificado y hostname del broker. La consulta JWKS del broker es HTTPS independiente. | Pendiente; listener, host, puerto, CA y SAN productivos no están acordados. | El fixture 4.3.7 usa OAuth2 (`rabbitmq_auth_backend_oauth2`), SASL PLAIN para transportar el token, RS256, JWKS HTTPS, validación de audience y `exp`, y no permite anónimo. `5671` es interno a la red del fixture, sin publicación al host; `8443` es del Auth Server de prueba. Ninguno es asignación productiva. |
 | PostgreSQL | El archivador usa `SPRING_DATASOURCE_URL` JDBC. | Pendiente; host y puerto entre VMs no están acordados. | El fixture de integración publica `127.0.0.1:5433` hacia `5432` del contenedor; ambos son datos de prueba local. |
 | Backend del dashboard | `SERVER_PORT` tiene default HTTP de desarrollo `8080`; el navegador usa HTTP/WebSocket same-origin en `/ws/traffic`. | Pendiente; exposición, proxy/ruta y terminación TLS deben acordarse. | El default local no autoriza exposición en AWS. |
-| Administración remota | El portátil de Héctor inicia una sesión de Session Manager; el SSM Agent de cada VM inicia el canal saliente hacia Systems Manager. Ansible puede usar un plugin compatible con SSM o ejecutarse dentro de la sesión aprobada. | Comandos/respuestas de administración por el canal de SSM. | AWS Systems Manager Session Manager; no requiere SSH público ni ingress administrativo. | Administrar el despliegue sin ejecutar los microservicios en el portátil. | Decisión de demo: Session Manager, instancia con rol `AmazonSSMManagedInstanceCore` y salida TCP 443. Pendientes: IAM Identity Center/identidad del portátil, permisos mínimos de Héctor, acceso desde WSL2 a las APIs de AWS, etiquetas/inventario y validar SSM Agent/conectividad al desplegar. |
-| Portátil de Héctor → dashboard | El navegador local conecta por un túnel de port forwarding de Session Manager al listener de `vm-app`; las respuestas regresan por el túnel. | HTTP/WebSocket same-origin entre el navegador local y el backend. | Session Manager port forwarding; listener y puerto productivos por confirmar. | Presentar el dashboard sin exponerlo a Internet. | Estrategia decidida para la demo, pendiente configurar IAM/CLI/plugin y confirmar el listener del backend y el puerto local/remoto. No se configura ingress público. |
-
 Para tráfico entre VMs, no usar `kafka`, `localhost` ni alias de una red Docker
 como destino. El listener Kafka debe anunciar un nombre o dirección privada
 alcanzable y coherente con el SAN del certificado; el listener de control KRaft
@@ -146,7 +152,8 @@ acordarse antes de crear reglas.
 |---|---|---|---|---|---|
 | VM → DNS | El host o servicio que necesite resolver nombres inicia la consulta hacia el resolver configurado. | Consulta y respuesta DNS. | DNS; transporte, servidor y puerto por definir. | Resolución de nombres, solo si la configuración lo requiere. | Condicional y pendiente; no se asigna resolver. |
 | VM → NTP | El host o servicio de tiempo inicia la conexión hacia la fuente de tiempo configurada. | Solicitud y respuesta de sincronización de tiempo. | NTP; servidor, transporte y puerto por definir. | Sincronizar reloj, si se habilita. | Condicional y pendiente; no se asigna servidor. |
-| Portátil de Héctor → VMs | El portátil autorizado inicia la administración remota por SSH privado o solicita la sesión mediante AWS; si se aprueba SSM, el SSM Agent de la VM inicia el canal saliente hacia Systems Manager. | Comandos/respuestas de administración por el canal aprobado. | SSH privado o AWS Systems Manager Session Manager; método, rutas y puertos por definir. | Administrar el despliegue y presentar desde el portátil sin ejecutar microservicios allí. | Opciones propuestas por Héctor, no seleccionadas. SSM requiere acceso autorizado desde WSL2 a las APIs de AWS y, por separado, conectividad saliente del agente hacia endpoints de Systems Manager. Requiere acordar IAM/SSO, roles, etiquetas, conectividad y costo. El port forwarding para el dashboard sería un túnel separado. No se autoriza SSH público. |
+| Portátil de Héctor → VMs | El portátil inicia la sesión; el SSM Agent de la VM mantiene el canal saliente hacia Systems Manager. | Comandos y respuestas de administración por el canal de SSM. | AWS Systems Manager Session Manager; sin SSH público ni ingress administrativo. | Administrar las VM sin ejecutar microservicios en el portátil. | Decisión de demo: Session Manager, rol de instancia `AmazonSSMManagedInstanceCore` y salida TCP 443. Pendiente configurar identidad/IAM y permisos mínimos de Héctor, acceso desde WSL2 a las API de AWS, etiquetas/inventario y validar SSM Agent/conectividad. |
+| Portátil de Héctor → dashboard | El portátil abre port forwarding de Session Manager hacia el listener de `vm-app`; el navegador usa el puerto local del túnel. | HTTP/WebSocket entre el navegador y el backend a través del túnel. | Session Manager port forwarding; no requiere ingress público. | Presentar el dashboard desde el portátil. | Estrategia decidida. Pendiente configurar IAM/CLI/plugin y confirmar listener y puertos local/remoto. No habilita reglas de red de aplicación entre las VM. |
 | VM → Internet para SSM y aprovisionamiento | Cada VM inicia conexiones salientes hacia los endpoints de Systems Manager, repositorios de imágenes y repositorios del sistema operativo. | Solicitud de conexión/descarga: VM → Internet; respuesta por la misma conexión. | TCP 443 a IPv4 Internet mediante IPv4 pública dinámica e Internet Gateway; no se crea NAT Gateway. | Registrar y administrar las instancias con SSM; descargar imágenes y actualizaciones. | Salida configurada por defecto solo en TCP 443. Security Groups no filtran por FQDN, así que los destinos no quedan limitados a una lista de dominios. DNS/NTP y otros destinos opcionales no se habilitan como reglas de egress aquí y deberán verificarse en el despliegue. |
 
 ## Uso posterior para reglas `nftables`
