@@ -309,6 +309,7 @@ services:
       RABBITMQ_PORT: "5671"
       RABBITMQ_VHOST: smarttraffic-it
       RABBITMQ_QUERY_QUEUE: query-requests-it
+      RABBITMQ_QUERY_ANSWERS_EXCHANGE: query-answers-it
       RABBITMQ_QUERY_REPLY_QUEUE: query-replies-it
       RABBITMQ_QUERY_CLIENT_ID: client-it
       QUERY_ZONE_IDS: zone-1
@@ -316,7 +317,14 @@ services:
       QUERY_TIMEOUT_SECONDS: "10"
       RABBITMQ_OAUTH_CLIENT_ID: rabbit-query-client-it
       RABBITMQ_OAUTH_CLIENT_SECRET: ${RABBITMQ_IT_QUERY_SECRET:?Run prepare-assets.ps1 first}
-      RABBITMQ_OAUTH_SCOPE: smarttraffic-rabbitmq-it.write:smarttraffic-it/query-requests-it smarttraffic-rabbitmq-it.write:smarttraffic-it/amq.default smarttraffic-rabbitmq-it.read:smarttraffic-it/query-replies-it
+      RABBITMQ_OAUTH_SCOPE: >-
+        smarttraffic-rabbitmq-it.write:smarttraffic-it/query-requests-it
+        smarttraffic-rabbitmq-it.write:smarttraffic-it/amq.default
+        smarttraffic-rabbitmq-it.configure:smarttraffic-it/query-replies-it
+        smarttraffic-rabbitmq-it.write:smarttraffic-it/query-replies-it
+        smarttraffic-rabbitmq-it.read:smarttraffic-it/query-replies-it
+        smarttraffic-rabbitmq-it.read:smarttraffic-it/query-answers-it
+        smarttraffic-rabbitmq-it.write:smarttraffic-it/query-answers-it/client-it
       AUTH_TOKEN_ENDPOINT_URI: https://host.docker.internal:18443/oauth2/token
       AUTH_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
       RABBITMQ_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
