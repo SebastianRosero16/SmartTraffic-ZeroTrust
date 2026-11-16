@@ -1,0 +1,341 @@
+include:
+  - path: ../vm-data/compose.yaml
+    env_file: ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}/demo.env
+  - path: ../vm-data/rabbitmq/compose.yaml
+    env_file: ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}/demo.env
+
+services:
+  kafka:
+    environment:
+      KAFKA_OPTS: ${KAFKA_OPTS:?Run prepare-assets.ps1 first}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      auth-server:
+        condition: service_healthy
+
+  rabbitmq:
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      auth-server:
+        condition: service_healthy
+
+  auth-server:
+    image: maven:3.9.9-eclipse-temurin-17
+    working_dir: /workspace
+    command:
+      - mvn
+      - -B
+      - -ntp
+      - -pl
+      - services/auth-server
+      - spring-boot:run
+      - -Dspring-boot.run.arguments=--spring.config.additional-location=file:/demo-assets/application-test-container.yml
+    volumes:
+      - ../..:/workspace
+      - maven-cache:/root/.m2
+      - ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}:/demo-assets:ro
+    ports:
+      - 127.0.0.1:18443:8443
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      maven-build:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8443'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+    networks:
+      - vm-data-private
+      - rabbitmq-it
+
+  postgres:
+    image: postgres:16.6-alpine
+    environment:
+      POSTGRES_DB: smarttraffic
+      POSTGRES_USER: smarttraffic_demo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run prepare-assets.ps1 first}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smarttraffic_demo -d smarttraffic"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - vm-data-private
+
+  maven-build:
+    image: maven:3.9.9-eclipse-temurin-17
+    working_dir: /workspace
+    command: [mvn, -B, -ntp, -DskipTests, install]
+    volumes:
+      - ../..:/workspace
+      - maven-cache:/root/.m2
+    networks:
+      - vm-data-private
+    restart: "no"
+
+  kafka-init:
+    image: smarttraffic/kafka-oauth:4.4.0-oauth-0.18.1
+    entrypoint: ["/bin/bash", "/workspace/infra/local-demo/init-kafka.sh"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:${CLIENT_PORT:?Run prepare-assets.ps1 first}
+      KAFKA_ADMIN_PROPERTIES: /demo-assets/kafka-admin.properties
+    volumes:
+      - ../..:/workspace:ro
+      - ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}:/demo-assets:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      kafka:
+        condition: service_healthy
+      auth-server:
+        condition: service_healthy
+    networks:
+      - vm-data-private
+    restart: "no"
+
+  traffic-sensor-simulator:
+    image: maven:3.9.9-eclipse-temurin-17
+    working_dir: /workspace
+    command: [mvn, -B, -ntp, -pl, services/traffic-sensor-simulator, exec:java]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:${CLIENT_PORT:?Run prepare-assets.ps1 first}
+      AUTH_TOKEN_ENDPOINT_URI: https://host.docker.internal:18443/oauth2/token
+      AUTH_SSL_TRUSTSTORE_LOCATION: /demo-assets/kafka-tls/auth.truststore.p12
+      AUTH_SSL_TRUSTSTORE_PASSWORD: ${AUTH_TRUSTSTORE_PASSWORD:?Run prepare-assets.ps1 first}
+      AUTH_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /demo-assets/kafka-tls/broker.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: ${KAFKA_TRUSTSTORE_PASSWORD:?Run prepare-assets.ps1 first}
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_OAUTH_CLIENT_ID: traffic-simulator-it
+      KAFKA_OAUTH_CLIENT_SECRET: ${KAFKA_SIMULATOR_SECRET:?Run prepare-assets.ps1 first}
+      KAFKA_TRAFFIC_READINGS_TOPIC: traffic_readings
+      TRAFFIC_SENSOR_IDS: sensor-1
+      TRAFFIC_ZONE_IDS: zone-1
+      TRAFFIC_MIN_VEHICLES: "0"
+      TRAFFIC_MAX_VEHICLES: "20"
+      TRAFFIC_INTERVAL_MS: "1000"
+    volumes:
+      - ../..:/workspace
+      - maven-cache:/root/.m2
+      - ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}:/demo-assets:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      maven-build:
+        condition: service_completed_successfully
+      auth-server:
+        condition: service_healthy
+    networks:
+      - vm-data-private
+
+  traffic-density-processor:
+    image: maven:3.9.9-eclipse-temurin-17
+    working_dir: /workspace
+    command:
+      - mvn
+      - -B
+      - -ntp
+      - -pl
+      - services/traffic-density-processor
+      - exec:java
+      - -Dexec.mainClass=edu.smarttraffic.processor.TrafficDensityProcessorApplication
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:${CLIENT_PORT:?Run prepare-assets.ps1 first}
+      AUTH_TOKEN_ENDPOINT_URI: https://host.docker.internal:18443/oauth2/token
+      AUTH_SSL_TRUSTSTORE_LOCATION: /demo-assets/kafka-tls/auth.truststore.p12
+      AUTH_SSL_TRUSTSTORE_PASSWORD: ${AUTH_TRUSTSTORE_PASSWORD:?Run prepare-assets.ps1 first}
+      AUTH_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /demo-assets/kafka-tls/broker.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: ${KAFKA_TRUSTSTORE_PASSWORD:?Run prepare-assets.ps1 first}
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_OAUTH_CLIENT_ID: traffic-processor-it
+      KAFKA_OAUTH_CLIENT_SECRET: ${KAFKA_PROCESSOR_SECRET:?Run prepare-assets.ps1 first}
+      KAFKA_STREAMS_APPLICATION_ID: traffic-density-demo
+      KAFKA_TRAFFIC_READINGS_TOPIC: traffic_readings
+      TRAFFIC_WINDOW_SECONDS: "10"
+      TRAFFIC_WINDOW_GRACE_SECONDS: "0"
+      TRAFFIC_MODERATE_THRESHOLD: "5"
+      TRAFFIC_CONGESTED_THRESHOLD: "10"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5671"
+      RABBITMQ_VHOST: smarttraffic-it
+      RABBITMQ_EXCHANGE: traffic-updates-it
+      RABBITMQ_OAUTH_CLIENT_ID: rabbit-publisher-it
+      RABBITMQ_OAUTH_CLIENT_SECRET: ${RABBITMQ_IT_PUBLISHER_SECRET:?Run prepare-assets.ps1 first}
+      RABBITMQ_OAUTH_SCOPE: smarttraffic-rabbitmq-it.write:smarttraffic-it/traffic-updates-it
+      AUTH_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
+      RABBITMQ_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
+    volumes:
+      - ../..:/workspace
+      - maven-cache:/root/.m2
+      - ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}:/demo-assets:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      maven-build:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      auth-server:
+        condition: service_healthy
+    networks:
+      - vm-data-private
+      - rabbitmq-it
+
+  traffic-archiver:
+    image: maven:3.9.9-eclipse-temurin-17
+    working_dir: /workspace
+    command: [mvn, -B, -ntp, -pl, services/traffic-archiver, spring-boot:run]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:${CLIENT_PORT:?Run prepare-assets.ps1 first}
+      AUTH_TOKEN_ENDPOINT_URI: https://host.docker.internal:18443/oauth2/token
+      AUTH_SSL_TRUSTSTORE_LOCATION: /demo-assets/kafka-tls/auth.truststore.p12
+      AUTH_SSL_TRUSTSTORE_PASSWORD: ${AUTH_TRUSTSTORE_PASSWORD:?Run prepare-assets.ps1 first}
+      AUTH_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /demo-assets/kafka-tls/broker.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: ${KAFKA_TRUSTSTORE_PASSWORD:?Run prepare-assets.ps1 first}
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      KAFKA_OAUTH_CLIENT_ID: traffic-archiver-it
+      KAFKA_OAUTH_CLIENT_SECRET: ${KAFKA_ARCHIVER_SECRET:?Run prepare-assets.ps1 first}
+      KAFKA_TRAFFIC_READINGS_TOPIC: traffic_readings
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/smarttraffic
+      SPRING_DATASOURCE_USERNAME: smarttraffic_demo
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Run prepare-assets.ps1 first}
+    volumes:
+      - ../..:/workspace
+      - maven-cache:/root/.m2
+      - ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}:/demo-assets:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      maven-build:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      auth-server:
+        condition: service_healthy
+    networks:
+      - vm-data-private
+
+  user-dashboard-backend:
+    image: maven:3.9.9-eclipse-temurin-17
+    working_dir: /workspace
+    command: [mvn, -B, -ntp, -pl, services/user-dashboard-backend, spring-boot:run]
+    environment:
+      SERVER_PORT: "8080"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5671"
+      RABBITMQ_VHOST: smarttraffic-it
+      RABBITMQ_DASHBOARD_QUEUE: dashboard-updates-it
+      RABBITMQ_OAUTH_CLIENT_ID: rabbit-reader-it
+      RABBITMQ_OAUTH_CLIENT_SECRET: ${RABBITMQ_IT_READER_SECRET:?Run prepare-assets.ps1 first}
+      RABBITMQ_OAUTH_SCOPE: smarttraffic-rabbitmq-it.read:smarttraffic-it/dashboard-updates-it
+      AUTH_TOKEN_ENDPOINT_URI: https://host.docker.internal:18443/oauth2/token
+      AUTH_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
+      RABBITMQ_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
+    ports:
+      - 127.0.0.1:18080:8080
+    volumes:
+      - ../..:/workspace
+      - maven-cache:/root/.m2
+      - ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}:/demo-assets:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      maven-build:
+        condition: service_completed_successfully
+      auth-server:
+        condition: service_healthy
+    networks:
+      - rabbitmq-it
+
+  alert-dispatcher:
+    image: maven:3.9.9-eclipse-temurin-17
+    working_dir: /workspace
+    command: [mvn, -B, -ntp, -pl, services/alert-dispatcher, exec:java]
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5671"
+      RABBITMQ_VHOST: smarttraffic-it
+      RABBITMQ_ALERT_QUEUE: alert-updates-it
+      RABBITMQ_QUERY_QUEUE: query-requests-it
+      RABBITMQ_QUERY_ANSWERS_EXCHANGE: query-answers-it
+      RABBITMQ_QUERY_REPLY_ROUTES: client-it=query-replies-it
+      RABBITMQ_OAUTH_CLIENT_ID: rabbit-alert-it
+      RABBITMQ_OAUTH_CLIENT_SECRET: ${RABBITMQ_IT_ALERT_SECRET:?Run prepare-assets.ps1 first}
+      RABBITMQ_OAUTH_SCOPE: smarttraffic-rabbitmq-it.read:smarttraffic-it/alert-updates-it smarttraffic-rabbitmq-it.read:smarttraffic-it/query-requests-it smarttraffic-rabbitmq-it.write:smarttraffic-it/query-answers-it/client-it
+      AUTH_TOKEN_ENDPOINT_URI: https://host.docker.internal:18443/oauth2/token
+      AUTH_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
+      RABBITMQ_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
+    volumes:
+      - ../..:/workspace
+      - maven-cache:/root/.m2
+      - ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}:/demo-assets:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      maven-build:
+        condition: service_completed_successfully
+      auth-server:
+        condition: service_healthy
+    networks:
+      - rabbitmq-it
+
+  query-client:
+    image: maven:3.9.9-eclipse-temurin-17
+    working_dir: /workspace
+    command: [mvn, -B, -ntp, -pl, services/query-client, exec:java]
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5671"
+      RABBITMQ_VHOST: smarttraffic-it
+      RABBITMQ_QUERY_QUEUE: query-requests-it
+      RABBITMQ_QUERY_REPLY_QUEUE: query-replies-it
+      RABBITMQ_QUERY_CLIENT_ID: client-it
+      QUERY_ZONE_IDS: zone-1
+      QUERY_INTERVAL_SECONDS: "10"
+      QUERY_TIMEOUT_SECONDS: "10"
+      RABBITMQ_OAUTH_CLIENT_ID: rabbit-query-client-it
+      RABBITMQ_OAUTH_CLIENT_SECRET: ${RABBITMQ_IT_QUERY_SECRET:?Run prepare-assets.ps1 first}
+      RABBITMQ_OAUTH_SCOPE: smarttraffic-rabbitmq-it.write:smarttraffic-it/query-requests-it smarttraffic-rabbitmq-it.write:smarttraffic-it/amq.default smarttraffic-rabbitmq-it.read:smarttraffic-it/query-replies-it
+      AUTH_TOKEN_ENDPOINT_URI: https://host.docker.internal:18443/oauth2/token
+      AUTH_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
+      RABBITMQ_TLS_CA_CERT_PATH: /demo-assets/oauth-ca.pem
+    volumes:
+      - ../..:/workspace
+      - maven-cache:/root/.m2
+      - ${LOCAL_DEMO_ASSETS:?Run prepare-assets.ps1 first}:/demo-assets:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      maven-build:
+        condition: service_completed_successfully
+      auth-server:
+        condition: service_healthy
+    networks:
+      - rabbitmq-it
+
+volumes:
+  maven-cache:
+  postgres-data:
