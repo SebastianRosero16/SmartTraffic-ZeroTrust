@@ -123,8 +123,11 @@ Los scopes OAuth no sustituyen autorización por recursos:
 
 `KAFKA_OAUTH_SCOPE` es opcional: los scopes OAuth no autorizan operaciones
 Kafka; las ACLs del broker son la política de recursos. En RabbitMQ, los scopes
-del fixture `smarttraffic-rabbitmq-it` solo corresponden al publicador y lector
-de prueba, no a una política productiva.
+del fixture `smarttraffic-rabbitmq-it` corresponden a identidades desechables
+de publicador, lector, dispatcher y cliente de consultas. La identidad de
+query-client requiere `read` sobre el exchange y la routing key `client-it` para
+enlazar su cola exclusiva; el dispatcher usa `write` sobre esa ruta para
+publicar respuestas. Esos scopes no son una política productiva.
 
 Los nombres, scopes y recursos `*-it` del fixture RabbitMQ son exclusivos de
 pruebas; la suite OAuth valida publicador/lector y el round-trip de alertas y

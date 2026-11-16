@@ -164,7 +164,7 @@ smarttraffic:
           - smarttraffic-rabbitmq-it.write:smarttraffic-it/query-replies-it
           - smarttraffic-rabbitmq-it.read:smarttraffic-it/query-replies-it
           - smarttraffic-rabbitmq-it.read:smarttraffic-it/query-answers-it
-          - smarttraffic-rabbitmq-it.write:smarttraffic-it/query-answers-it/client-it
+          - smarttraffic-rabbitmq-it.read:smarttraffic-it/query-answers-it/client-it
         audiences:
           - smarttraffic-rabbitmq-it
 "@

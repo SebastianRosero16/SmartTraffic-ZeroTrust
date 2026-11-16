@@ -27,8 +27,9 @@ additional variables:
 
 `RABBITMQ_OAUTH_SCOPE` must grant write access to the request queue through
 `amq.default`, configure/write/read access to this instance's reply queue, and
-read access to the response exchange plus write access to its routing key for
-the binding. The client
+read access to the response exchange and this instance's routing key for the
+binding. The dispatcher identity separately needs write access to its response
+routing key. The client
 declares and binds only its reply queue; shared queues and exchanges remain
 pre-provisioned. The fixture values `query-requests-it`, `query-replies-it`,
 `query-answers-it`, and `client-it` are test-only; production names and scopes

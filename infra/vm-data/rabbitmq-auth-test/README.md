@@ -102,8 +102,9 @@ correlation. Closing the query connection must auto-delete the queue. It uses
 only the generated test identities and strict CA/hostname validation.
 
 The test query-client identity has `write` on the request queue via
-`amq.default`, `configure`/`write`/`read` on its response queue, and `write` on
-the response exchange/routing key needed for binding plus `read` on that
-exchange. These scopes and all
-resources are confined to the disposable `smarttraffic-it` vhost and must not
-be copied to production identities.
+`amq.default`, `configure`/`write`/`read` on its response queue, and `read` on
+the response exchange and its `client-it` routing key to bind the exclusive
+queue. The separate alert-dispatcher identity has `write` on the `client-it`
+route to publish responses. These scopes and all resources are confined to the
+disposable `smarttraffic-it` vhost and must not be copied to production
+identities.

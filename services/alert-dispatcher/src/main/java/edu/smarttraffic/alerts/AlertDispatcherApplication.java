@@ -1,6 +1,8 @@
 package edu.smarttraffic.alerts;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import edu.smarttraffic.alerts.adapter.in.rabbitmq.RabbitMqAlertDispatcher;
 import edu.smarttraffic.alerts.application.TrafficAlertPublisher;
 import edu.smarttraffic.alerts.application.TrafficStateStore;
@@ -14,6 +16,13 @@ import org.springframework.context.annotation.Bean;
 public class AlertDispatcherApplication {
     public static void main(String[] args) {
         SpringApplication.run(AlertDispatcherApplication.class, args);
+    }
+
+    @Bean
+    ObjectMapper objectMapper() {
+        return new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
     @Bean

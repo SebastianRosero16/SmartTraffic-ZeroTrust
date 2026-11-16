@@ -48,7 +48,7 @@ class RabbitMqRoundTripIntegrationTest {
             RESOURCE_SERVER_ID + ".write:" + VHOST + "/" + REPLY_QUEUE,
             RESOURCE_SERVER_ID + ".read:" + VHOST + "/" + REPLY_QUEUE,
             RESOURCE_SERVER_ID + ".read:" + VHOST + "/" + QUERY_EXCHANGE,
-            RESOURCE_SERVER_ID + ".write:" + VHOST + "/" + QUERY_EXCHANGE + "/" + INSTANCE_ID);
+            RESOURCE_SERVER_ID + ".read:" + VHOST + "/" + QUERY_EXCHANGE + "/" + INSTANCE_ID);
     private static final String ALERT_SCOPE = String.join(" ",
             RESOURCE_SERVER_ID + ".read:" + VHOST + "/alert-updates-it",
             RESOURCE_SERVER_ID + ".read:" + VHOST + "/" + QUERY_QUEUE,
