@@ -1,10 +1,10 @@
 # Kafka OAuth integration
 
-This stage adds reusable Java client properties for SASL/OAUTHBEARER over
-SASL_SSL. It does not configure the broker, create topics, or start a Kafka
-client: the simulator, processor, and archiver do not yet have Kafka runtime
-adapters. The end-to-end checks remain blocked on Héctor's broker and an
-available Auth Server.
+This guide describes reusable Java client properties for SASL/OAUTHBEARER over
+SASL_SSL. It does not configure the broker or create topics. The simulator,
+processor, and archiver now include Kafka runtime adapters; validating their
+end-to-end flow still requires a healthy broker, an available Auth Server, and
+the approved local test credentials and ACLs.
 
 ## Client configuration
 
