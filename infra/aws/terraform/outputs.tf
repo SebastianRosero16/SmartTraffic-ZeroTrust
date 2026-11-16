@@ -8,3 +8,11 @@ output "vm_private_addresses" {
     }
   }
 }
+
+output "vm_public_ipv4_addresses" {
+  description = "Dynamic public IPv4 addresses of the five VMs; may change after stop or start."
+  value = {
+    for role, instance in aws_instance.vm :
+    role => instance.public_ip
+  }
+}
