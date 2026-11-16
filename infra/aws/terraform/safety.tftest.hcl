@@ -30,13 +30,14 @@ mock_provider "aws" {
 run "resource_creation_is_disabled_by_default" {
   command = plan
 
-  variables {
-    aws_region = "us-east-1"
-  }
-
   assert {
     condition     = length(aws_vpc.smarttraffic) == 0
     error_message = "The default plan must not create a VPC."
+  }
+
+  assert {
+    condition     = var.aws_region == "us-east-2"
+    error_message = "The default AWS region must be Ohio (us-east-2)."
   }
 
   assert {
@@ -82,11 +83,35 @@ run "resource_creation_is_disabled_by_default" {
   }
 }
 
+run "rejects_region_outside_ohio" {
+  command = plan
+
+  variables {
+    aws_region = "us-east-1"
+  }
+
+  expect_failures = [
+    var.aws_region,
+  ]
+}
+
+run "rejects_availability_zone_from_another_region" {
+  command = plan
+
+  variables {
+    availability_zone = "us-east-1a"
+  }
+
+  expect_failures = [
+    var.availability_zone,
+  ]
+}
+
 run "resource_creation_requires_cost_review" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
   }
 
@@ -99,7 +124,7 @@ run "rejects_all_ipv4_cidr" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     network_rules = [
       {
         direction      = "ingress"
@@ -122,7 +147,7 @@ run "rejects_two_ranges_covering_all_ipv4" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     network_rules = [
       {
         direction      = "ingress"
@@ -154,7 +179,7 @@ run "rejects_external_subnet_cidr" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     network_rules = [
       {
         direction      = "ingress"
@@ -177,7 +202,7 @@ run "accepts_vm_peers_and_single_host_cidrs" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     network_rules = [
       {
         direction   = "ingress"
@@ -214,10 +239,10 @@ run "creates_approved_one_az_public_network_and_persistent_volumes" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
     cost_review_confirmed    = true
-    availability_zone        = "us-east-1a"
+    availability_zone        = "us-east-2a"
     vpc_cidr                 = "10.10.0.0/16"
     subnet_cidrs = {
       vm-auth   = "10.10.1.0/24"
@@ -386,7 +411,7 @@ run "rejects_public_ipv4_ingress_host" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     network_rules = [
       {
         direction      = "ingress"
@@ -409,7 +434,7 @@ run "rejects_non_https_public_ipv4_egress" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     network_rules = [
       {
         direction      = "egress"
@@ -432,10 +457,10 @@ run "creates_no_application_ingress_without_confirmed_ports" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
     cost_review_confirmed    = true
-    availability_zone        = "us-east-1a"
+    availability_zone        = "us-east-2a"
     vpc_cidr                 = "10.10.0.0/16"
     subnet_cidrs = {
       vm-auth   = "10.10.1.0/24"
@@ -461,10 +486,10 @@ run "rejects_peer_inside_vpc_even_outside_subnets" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
     cost_review_confirmed    = true
-    availability_zone        = "us-east-1a"
+    availability_zone        = "us-east-2a"
     vpc_cidr                 = "10.10.0.0/16"
     subnet_cidrs = {
       vm-auth   = "10.10.1.0/24"
@@ -511,10 +536,10 @@ run "rejects_peer_inside_subnet" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
     cost_review_confirmed    = true
-    availability_zone        = "us-east-1a"
+    availability_zone        = "us-east-2a"
     vpc_cidr                 = "10.10.0.0/16"
     subnet_cidrs = {
       vm-auth   = "10.10.1.0/24"
@@ -561,10 +586,10 @@ run "rejects_private_peer_without_explicit_exception" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
     cost_review_confirmed    = true
-    availability_zone        = "us-east-1a"
+    availability_zone        = "us-east-2a"
     vpc_cidr                 = "10.10.0.0/16"
     subnet_cidrs = {
       vm-auth   = "10.10.1.0/24"
@@ -609,10 +634,10 @@ run "plans_only_required_https_egress_without_custom_egress_rules" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
     cost_review_confirmed    = true
-    availability_zone        = "us-east-1a"
+    availability_zone        = "us-east-2a"
     vpc_cidr                 = "10.10.0.0/16"
     subnet_cidrs = {
       vm-auth   = "10.10.1.0/24"
@@ -681,7 +706,7 @@ run "rejects_invalid_vpc_cidr" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     vpc_cidr   = "not-a-cidr"
   }
 
@@ -694,7 +719,7 @@ run "rejects_unsupported_vpc_prefix" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     vpc_cidr   = "10.10.0.0/15"
   }
 
@@ -707,7 +732,7 @@ run "rejects_noncanonical_vpc_cidr" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     vpc_cidr   = "10.10.0.1/16"
   }
 
@@ -720,7 +745,7 @@ run "rejects_invalid_subnet_cidr" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     subnet_cidrs = {
       vm-auth = "not-a-cidr"
     }
@@ -735,7 +760,7 @@ run "rejects_unsupported_subnet_prefix" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     subnet_cidrs = {
       vm-auth = "10.10.1.0/29"
     }
@@ -750,7 +775,7 @@ run "rejects_noncanonical_subnet_cidr" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
+    aws_region = "us-east-2"
     subnet_cidrs = {
       vm-auth = "10.10.1.1/24"
     }
@@ -765,10 +790,10 @@ run "rejects_non_private_vpc_cidr" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
     cost_review_confirmed    = true
-    availability_zone        = "us-east-1a"
+    availability_zone        = "us-east-2a"
     vpc_cidr                 = "198.51.100.0/24"
     subnet_cidrs = {
       vm-auth   = "198.51.100.0/28"
@@ -802,10 +827,10 @@ run "rejects_overlapping_subnet_cidrs" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
     cost_review_confirmed    = true
-    availability_zone        = "us-east-1a"
+    availability_zone        = "us-east-2a"
     vpc_cidr                 = "10.10.0.0/16"
     subnet_cidrs = {
       vm-auth   = "10.10.1.0/24"
@@ -839,10 +864,10 @@ run "rejects_subnet_outside_vpc" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
+    aws_region               = "us-east-2"
     enable_resource_creation = true
     cost_review_confirmed    = true
-    availability_zone        = "us-east-1a"
+    availability_zone        = "us-east-2a"
     vpc_cidr                 = "10.10.0.0/16"
     subnet_cidrs = {
       vm-auth   = "10.11.1.0/24"

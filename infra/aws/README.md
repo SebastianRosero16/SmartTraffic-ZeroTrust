@@ -21,7 +21,7 @@ The Terraform module is deliberately disabled by default:
   deliberate human gate, not a pricing guarantee or a substitute for checking
   the AWS account.
 - The approved demonstration network uses one public subnet per VM in one
-  selected `us-east-1` Availability Zone, one Internet Gateway, and one public
+  selected `us-east-2` Availability Zone, one Internet Gateway, and one public
   route table. Each instance receives a dynamic public IPv4 address; no NAT
   Gateway or Elastic IP is created.
 - Security Groups have no ingress rules by default. The only built-in egress
@@ -66,7 +66,13 @@ credit assumptions.
 
 ## Approved demonstration design
 
-- Region: `us-east-1`; exactly one account-available Availability Zone.
+- Region: US East (Ohio), `us-east-2`; exactly one account-available
+  Availability Zone.
+- AWS's regional-services list includes EC2, EBS, VPC, and Systems Manager as
+  core services for AWS Regions. AWS lists three AZs in `us-east-2`, but the
+  account-visible AZ name must be confirmed in the console. Keep
+  `availability_zone` unset until that check; do not assume a particular AZ
+  suffix.
 - Five role-specific subnets and Security Groups: `vm-auth`, `vm-data`,
   `vm-ingest`, `vm-core`, and `vm-app`.
 - Dynamic public IPv4 addresses and outbound Internet Gateway routing support
@@ -88,7 +94,9 @@ and broker/controller listeners; RabbitMQ AMQPS; PostgreSQL; and the dashboard
 HTTP/WebSocket listener. Values such as fixture ports `5671`, `5432`, `5433`,
 `8080`, and `9092`/`9093` are not approved production assignments. Do not add
 them to `network_rules` until the service owners confirm listeners, TLS names,
-and client-to-service flows. The required SSM egress port is TCP 443.
+and client-to-service flows. The required SSM egress port is TCP 443. See
+[AWS services by Region](https://aws.amazon.com/about-aws/global-infrastructure/regional-product-services/)
+and [AWS Availability Zones](https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-availability-zones.html).
 
 ## Compute, storage, and recovery
 
@@ -119,17 +127,24 @@ disks, or configure Compose/Ansible.
 
 ## Approximate costs
 
-Planning figures for one VM-hour per running instance in `us-east-1`, Linux
-On-Demand, excluding taxes and usage-based charges:
+Planning figures for one VM-hour per running instance in `us-east-2` (Ohio),
+Linux On-Demand, excluding taxes and usage-based charges. The EC2 T3 and gp3
+rates below are budgeting assumptions, not a live Ohio quote; confirm the
+account-specific amounts in the [AWS Pricing Calculator](https://calculator.aws/)
+before enabling creation:
 
 - Five dynamic public IPv4 addresses: about US$4.33 for 173 hours or US$18.25
-  for 730 hours, using US$0.005 per address-hour.
-- The minimum EC2 mix above: about US$32.39 for 173 hours or US$136.66 for
-  730 hours, before any T3 surplus CPU-credit charges.
+  for 730 hours, using US$0.005 per address-hour (AWS lists this IPv4 rate
+  across commercial regions).
+- The minimum EC2 mix above: about US$32.52 for 173 hours or US$137.24 for
+  730 hours, using planning rates of about US$0.0209/hour per `t3.small`,
+  US$0.0418/hour per `t3.medium`, and US$0.0835/hour per `t3.large`, before any
+  T3 surplus CPU-credit charges.
 - 170 GiB of gp3 volumes (110 GiB root plus 60 GiB data): about US$13.60 per
-  30-day month, including when instances are stopped.
-- Approximate combined subtotal: US$50.31 at 173 EC2 hours with a full-month
-  EBS allocation, or US$168.51 at 24/7. This excludes data transfer, snapshots,
+  30-day month, using a planning rate of US$0.08/GiB-month, including when
+  instances are stopped.
+- Approximate combined subtotal: US$50.45 at 173 EC2 hours with a full-month
+  EBS allocation, or US$169.09 at 24/7. This excludes data transfer, snapshots,
   CloudWatch/S3 logs, taxes, and other account-specific charges.
 
 These are estimates, not an AWS quote. Review current [EC2](https://aws.amazon.com/ec2/instance-types/t3/),

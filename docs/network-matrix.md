@@ -25,12 +25,12 @@ solo lo son si el enunciado los fija.
 
 **Estado de revisión:** Steven aprobó la precisión del texto compartido para
 Auth, Kafka y RabbitMQ; Héctor aprobó los flujos lógicos, pero no la matriz
-completa como base de producción. Para la demostración se decidió `us-east-1`,
-una AZ, cinco subredes con IPv4 públicas dinámicas, administración por Session
-Manager y port forwarding de Session Manager para el dashboard, sin SSH ni
-ingress público. Siguen pendientes los CIDR, la AZ disponible para la cuenta,
-la identidad IAM del portátil, el inventario y los listeners/puertos de
-producción.
+completa como base de producción. Para la demostración se decidió US East
+(Ohio), `us-east-2`, una AZ, cinco subredes con IPv4 públicas dinámicas,
+administración por Session Manager y port forwarding de Session Manager para el
+dashboard, sin SSH ni ingress público. Siguen pendientes los CIDR, la AZ
+disponible para la cuenta, la identidad IAM del portátil, el inventario y los
+listeners/puertos de producción.
 
 **Alcance actual de Terraform:** `network_rules` está vacío por defecto. La
 única regla de salida automática es TCP 443 para SSM, imágenes y actualizaciones;

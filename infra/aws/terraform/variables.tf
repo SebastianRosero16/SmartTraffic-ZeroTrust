@@ -1,11 +1,11 @@
 variable "aws_region" {
-  description = "Approved AWS deployment region for the university demonstration."
+  description = "AWS deployment region assigned to the SmartTraffic university demonstration."
   type        = string
-  default     = "us-east-1"
+  default     = "us-east-2"
 
   validation {
-    condition     = var.aws_region == "us-east-1"
-    error_message = "The approved SmartTraffic demonstration region is us-east-1."
+    condition     = var.aws_region == "us-east-2"
+    error_message = "The SmartTraffic demonstration account is assigned to us-east-2 (Ohio)."
   }
 }
 
@@ -22,9 +22,14 @@ variable "cost_review_confirmed" {
 }
 
 variable "availability_zone" {
-  description = "Availability Zone selected for the single-AZ student deployment."
+  description = "Account-available Availability Zone name in us-east-2, selected after checking the AWS console."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.availability_zone == "" || can(regex("^us-east-2[a-z]$", var.availability_zone))
+    error_message = "availability_zone must be empty or an Availability Zone name in us-east-2."
+  }
 }
 
 variable "vpc_cidr" {
