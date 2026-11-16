@@ -71,3 +71,8 @@ dashboard reader, alert dispatcher, and query client identities. Their random
 credentials are stored only in generated files outside the repository
 (`application-test.yml` and `test-clients.env`). Do not copy them into
 production or share the generated private keys.
+
+The test query-client identity includes write access to RabbitMQ's `amq.default`
+exchange because the client publishes requests to its configured queue through
+that exchange. This permission exists only in the disposable `smarttraffic-it`
+vhost fixture and must not be copied to production identities.

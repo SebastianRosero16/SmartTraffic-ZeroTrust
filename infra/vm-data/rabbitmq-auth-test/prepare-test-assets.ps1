@@ -159,6 +159,7 @@ smarttraffic:
         secret: "$querySecret"
         scopes:
           - smarttraffic-rabbitmq-it.write:smarttraffic-it/query-requests-it
+          - smarttraffic-rabbitmq-it.write:smarttraffic-it/amq.default
           - smarttraffic-rabbitmq-it.read:smarttraffic-it/query-replies-it
         audiences:
           - smarttraffic-rabbitmq-it
