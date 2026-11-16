@@ -13,6 +13,7 @@ import edu.smarttraffic.contracts.ZoneId;
 import edu.smarttraffic.queryclient.config.QueryClientSettings;
 import edu.smarttraffic.rabbitmqsecurity.RabbitMqOAuthClient;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 
@@ -54,11 +55,23 @@ class RabbitMqTrafficQueryClientTest {
         verify(channel).basicNack(DELIVERY_TAG, false, false);
     }
 
+    @Test
+    void declaresAnExclusiveAutoDeleteReplyQueueAndBindsItToTheInstanceRoute() throws Exception {
+        RabbitMqTrafficQueryClient client = client(new ObjectMapper().findAndRegisterModules());
+        Channel channel = mock(Channel.class);
+
+        client.declareReplyQueue(channel);
+
+        verify(channel).queueDeclare("query-replies-it", false, true, true, Map.of());
+        verify(channel).queueBind("query-replies-it", "query-answers-it", "client-it");
+    }
+
     private static RabbitMqTrafficQueryClient client(ObjectMapper mapper) {
         return new RabbitMqTrafficQueryClient(
                 mock(RabbitMqOAuthClient.class),
                 new QueryClientSettings(
                         "query-requests-it",
+                        "query-answers-it",
                         "query-replies-it",
                         "client-it",
                         List.of(new ZoneId("zone-a")),

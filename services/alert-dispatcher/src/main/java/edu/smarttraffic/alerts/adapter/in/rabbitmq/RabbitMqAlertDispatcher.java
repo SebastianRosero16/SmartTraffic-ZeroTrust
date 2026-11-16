@@ -8,6 +8,7 @@ import com.rabbitmq.client.DefaultConsumer;
 import com.rabbitmq.client.Envelope;
 import com.rabbitmq.client.ShutdownSignalException;
 import edu.smarttraffic.alerts.application.TrafficStateStore;
+import edu.smarttraffic.alerts.application.TrafficAlertPublisher;
 import edu.smarttraffic.alerts.config.AlertDispatcherSettings;
 import edu.smarttraffic.contracts.TrafficQuery;
 import edu.smarttraffic.contracts.TrafficQueryResponse;
@@ -30,10 +31,12 @@ public final class RabbitMqAlertDispatcher implements AutoCloseable {
     private final RabbitMqOAuthClient oauthClient;
     private final AlertDispatcherSettings settings;
     private final TrafficStateStore stateStore;
+    private final TrafficAlertPublisher alertPublisher;
     private final ObjectMapper objectMapper;
     private final AtomicReference<String> returnedMessage = new AtomicReference<>();
 
     private volatile boolean running = true;
+    private volatile Thread worker;
     private volatile Connection connection;
     private volatile Channel updatesChannel;
     private volatile Channel queriesChannel;
@@ -42,10 +45,12 @@ public final class RabbitMqAlertDispatcher implements AutoCloseable {
             RabbitMqOAuthClient oauthClient,
             AlertDispatcherSettings settings,
             TrafficStateStore stateStore,
+            TrafficAlertPublisher alertPublisher,
             ObjectMapper objectMapper) {
         this.oauthClient = Objects.requireNonNull(oauthClient, "RabbitMQ OAuth client is required");
         this.settings = Objects.requireNonNull(settings, "Dispatcher settings are required");
         this.stateStore = Objects.requireNonNull(stateStore, "Traffic state store is required");
+        this.alertPublisher = Objects.requireNonNull(alertPublisher, "Traffic alert publisher is required");
         this.objectMapper = Objects.requireNonNull(objectMapper, "Object mapper is required");
     }
 
@@ -148,10 +153,35 @@ public final class RabbitMqAlertDispatcher implements AutoCloseable {
         }
     }
 
+    public synchronized void start() {
+        if (worker != null && worker.isAlive()) {
+            return;
+        }
+        running = true;
+        worker = new Thread(this::run, "alert-dispatcher");
+        worker.start();
+    }
+
     @Override
     public void close() {
         running = false;
         closeConnection(queriesChannel, updatesChannel, connection);
+        Thread activeWorker = worker;
+        if (activeWorker != null && activeWorker != Thread.currentThread()) {
+            activeWorker.interrupt();
+            try {
+                activeWorker.join(5_000);
+                if (activeWorker.isAlive()) {
+                    LOGGER.log(System.Logger.Level.WARNING,
+                            "Alert dispatcher did not stop within 5 seconds");
+                }
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                LOGGER.log(System.Logger.Level.WARNING,
+                        "Interrupted while stopping alert dispatcher",
+                        exception);
+            }
+        }
     }
 
     void processUpdate(Channel channel, Envelope envelope, byte[] body) throws IOException {
@@ -173,11 +203,7 @@ public final class RabbitMqAlertDispatcher implements AutoCloseable {
                 LOGGER.log(System.Logger.Level.DEBUG,
                         "Ignoring stale traffic update for zone " + update.zoneId().value());
             }
-            acceptance.alert().ifPresent(alert -> LOGGER.log(
-                    System.Logger.Level.WARNING,
-                    "Traffic alert: zone=" + alert.zoneId().value()
-                            + ", status=" + alert.previousStatus() + "->" + alert.currentStatus()
-                            + ", measuredAt=" + alert.measuredAt()));
+            acceptance.alert().ifPresent(alertPublisher::publish);
         } catch (RuntimeException exception) {
             LOGGER.log(System.Logger.Level.ERROR, "Could not apply traffic update; requeuing it", exception);
             channel.basicNack(envelope.getDeliveryTag(), false, true);

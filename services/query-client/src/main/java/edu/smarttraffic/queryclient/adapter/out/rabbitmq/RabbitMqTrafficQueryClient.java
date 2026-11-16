@@ -13,6 +13,8 @@ import edu.smarttraffic.queryclient.config.QueryClientSettings;
 import edu.smarttraffic.rabbitmqsecurity.RabbitMqOAuthClient;
 import java.io.IOException;
 import java.util.Objects;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -38,6 +40,7 @@ public final class RabbitMqTrafficQueryClient implements AutoCloseable {
     private final AtomicReference<String> returnedMessage = new AtomicReference<>();
 
     private volatile boolean running = true;
+    private volatile Thread worker;
     private volatile Connection connection;
     private volatile Channel publisherChannel;
     private volatile Channel replyChannel;
@@ -76,19 +79,8 @@ public final class RabbitMqTrafficQueryClient implements AutoCloseable {
                         (replyCode, replyText, exchange, routingKey, properties, body) ->
                                 returnedMessage.set("reply code " + replyCode + " (" + replyText
                                         + "), exchange " + exchange + ", routing key " + routingKey));
-                responseConsumer.basicConsume(
-                        settings.replyQueue(),
-                        false,
-                        new DefaultConsumer(responseConsumer) {
-                            @Override
-                            public void handleDelivery(
-                                    String consumerTag,
-                                    Envelope envelope,
-                                    AMQP.BasicProperties properties,
-                                    byte[] body) throws IOException {
-                                processResponse(responseConsumer, envelope, properties, body);
-                            }
-                        });
+                declareReplyQueue(responseConsumer);
+                startReplyConsumer(responseConsumer);
                 connected = true;
                 retryDelayMillis = INITIAL_RETRY_DELAY_MILLIS;
 
@@ -138,11 +130,36 @@ public final class RabbitMqTrafficQueryClient implements AutoCloseable {
         }
     }
 
+    public synchronized void start() {
+        if (worker != null && worker.isAlive()) {
+            return;
+        }
+        running = true;
+        worker = new Thread(this::run, "query-client-" + settings.instanceId());
+        worker.start();
+    }
+
     @Override
     public void close() {
         running = false;
         completePendingExceptionally(new IOException("Query client is shutting down"));
         closeConnection(replyChannel, publisherChannel, connection);
+        Thread activeWorker = worker;
+        if (activeWorker != null && activeWorker != Thread.currentThread()) {
+            activeWorker.interrupt();
+            try {
+                activeWorker.join(5_000);
+                if (activeWorker.isAlive()) {
+                    LOGGER.log(System.Logger.Level.WARNING,
+                            "Query client did not stop within 5 seconds");
+                }
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                LOGGER.log(System.Logger.Level.WARNING,
+                        "Interrupted while stopping query client",
+                        exception);
+            }
+        }
     }
 
     void processResponse(
@@ -178,7 +195,33 @@ public final class RabbitMqTrafficQueryClient implements AutoCloseable {
         channel.basicAck(envelope.getDeliveryTag(), false);
     }
 
-    private void sendQuery(Channel channel) throws IOException, InterruptedException, TimeoutException {
+    void declareReplyQueue(Channel channel) throws IOException {
+        channel.queueDeclare(settings.replyQueue(), false, true, true, Map.of());
+        channel.queueBind(
+                settings.replyQueue(),
+                settings.answersExchange(),
+                settings.instanceId());
+    }
+
+    void startReplyConsumer(Channel channel) throws IOException {
+        channel.basicQos(1);
+        channel.basicConsume(
+                settings.replyQueue(),
+                false,
+                new DefaultConsumer(channel) {
+                    @Override
+                    public void handleDelivery(
+                            String consumerTag,
+                            Envelope envelope,
+                            AMQP.BasicProperties properties,
+                            byte[] body) throws IOException {
+                        processResponse(channel, envelope, properties, body);
+                    }
+                });
+    }
+
+    Optional<TrafficQueryResponse> sendQuery(Channel channel)
+            throws IOException, InterruptedException, TimeoutException {
         String requestId = UUID.randomUUID().toString();
         CompletableFuture<TrafficQueryResponse> responseFuture = registerPending(requestId);
         TrafficQuery query = new TrafficQuery(requestId, settings.instanceId(), settings.zoneIds());
@@ -223,10 +266,12 @@ public final class RabbitMqTrafficQueryClient implements AutoCloseable {
                         .forEach(zoneId -> LOGGER.log(
                                 System.Logger.Level.INFO,
                                 "No traffic state available for zone " + zoneId));
+                return Optional.of(response);
             } catch (TimeoutException exception) {
                 LOGGER.log(System.Logger.Level.WARNING,
                         "No response received for traffic query " + requestId
                                 + " within " + settings.responseTimeoutMillis() + " ms");
+                return Optional.empty();
             } catch (ExecutionException exception) {
                 throw new IOException("Could not receive traffic query response", exception.getCause());
             }

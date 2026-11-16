@@ -2,23 +2,58 @@ package edu.smarttraffic.alerts;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.smarttraffic.alerts.adapter.in.rabbitmq.RabbitMqAlertDispatcher;
+import edu.smarttraffic.alerts.application.TrafficAlertPublisher;
 import edu.smarttraffic.alerts.application.TrafficStateStore;
 import edu.smarttraffic.alerts.config.AlertDispatcherSettings;
 import edu.smarttraffic.rabbitmqsecurity.RabbitMqOAuthClient;
-import java.util.Map;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
 
-public final class AlertDispatcherApplication {
-    private AlertDispatcherApplication() {
+@SpringBootApplication
+public class AlertDispatcherApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(AlertDispatcherApplication.class, args);
     }
 
-    public static void main(String[] args) {
-        Map<String, String> environment = System.getenv();
-        RabbitMqAlertDispatcher dispatcher = new RabbitMqAlertDispatcher(
-                new RabbitMqOAuthClient(environment),
-                AlertDispatcherSettings.from(environment),
-                new TrafficStateStore(),
-                new ObjectMapper().findAndRegisterModules());
-        Runtime.getRuntime().addShutdownHook(new Thread(dispatcher::close, "alert-dispatcher-shutdown"));
-        dispatcher.run();
+    @Bean
+    RabbitMqOAuthClient rabbitMqOAuthClient() {
+        return new RabbitMqOAuthClient(System.getenv());
+    }
+
+    @Bean
+    AlertDispatcherSettings alertDispatcherSettings() {
+        return AlertDispatcherSettings.from(System.getenv());
+    }
+
+    @Bean
+    TrafficStateStore trafficStateStore() {
+        return new TrafficStateStore();
+    }
+
+    @Bean
+    TrafficAlertPublisher trafficAlertPublisher() {
+        TrafficAlertPublisher publisher = new TrafficAlertPublisher();
+        publisher.subscribe(alert -> System.getLogger(AlertDispatcherApplication.class.getName()).log(
+                System.Logger.Level.WARNING,
+                "Traffic alert: zone=" + alert.zoneId().value()
+                        + ", status=" + alert.previousStatus() + "->" + alert.currentStatus()
+                        + ", measuredAt=" + alert.measuredAt()));
+        return publisher;
+    }
+
+    @Bean(initMethod = "start", destroyMethod = "close")
+    RabbitMqAlertDispatcher rabbitMqAlertDispatcher(
+            RabbitMqOAuthClient oauthClient,
+            AlertDispatcherSettings settings,
+            TrafficStateStore stateStore,
+            TrafficAlertPublisher alertPublisher,
+            ObjectMapper objectMapper) {
+        return new RabbitMqAlertDispatcher(
+                oauthClient,
+                settings,
+                stateStore,
+                alertPublisher,
+                objectMapper);
     }
 }

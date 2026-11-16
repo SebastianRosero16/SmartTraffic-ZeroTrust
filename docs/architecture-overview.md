@@ -38,18 +38,23 @@ valores provisionales de desarrollo; la topología y los permisos definitivos
 siguen pendientes. Los requisitos de ejecución están en el
 [README del backend](../services/user-dashboard-backend/README.md).
 
-`alert-dispatcher` y `query-client` ya implementan el consumo y respuesta a
-consultas correlacionadas, así como alertas de registro por transición de
-estado. Ambos tienen pruebas unitarias, pero el flujo conjunto aún no se ha
-validado con un broker RabbitMQ. Las reglas de notificación, los nombres de
-topología de producción y los permisos definitivos siguen pendientes.
+`alert-dispatcher` y `query-client` son aplicaciones Spring Boot que consumen y
+responden consultas correlacionadas. El dispatcher publica alertas de transición
+mediante Observer; el query-client crea una cola de respuesta exclusiva,
+autoborrable y enlazada al exchange por instancia. El round-trip, incluida una
+respuesta no vacía con correlación, pasó contra el fixture RabbitMQ de pruebas.
+Las reglas de notificación productivas, los nombres de topología y los permisos
+definitivos siguen pendientes.
 
 Esta propuesta incorpora `alert-dispatcher` y `query-client`, que no estaban en
 la base `develop` desde la que se preparó la integración
-(`bdff99f2978f26ce8683c2f069a9a6b047925cd3`). `mvn -B test` ejecutó 100 casos:
-96 aprobados y 4 pruebas de integración omitidas por requerir servicios
-externos. El flujo conjunto de alertas y consultas aún requiere validación con
-un broker RabbitMQ.
+(`bdff99f2978f26ce8683c2f069a9a6b047925cd3`). La suite completa anterior
+ejecutó 100 casos: 96 aprobados y 4 pruebas de integración omitidas por requerir
+servicios externos. En esta revisión, `mvn -B -pl services/query-client -am
+test` ejecutó 28 pruebas: 27 aprobadas y 1 omitida cuando no se habilita el
+fixture broker-backed. Con `RABBITMQ_IT=true`, la misma suite ejecutó 28
+pruebas aprobadas, incluidas las pruebas de contexto Spring Boot y el round-trip
+RabbitMQ. Esta evidencia no valida la topología ni las identidades productivas.
 
 ## Responsabilidades de los servicios
 
@@ -130,10 +135,10 @@ requieren decisiones de diseño y pruebas.
 3. El dispatcher publica la respuesta en el Topic Exchange `query_answers`,
    conservando el `correlationId` y usando una routing key asociada a la
    instancia solicitante.
-4. Cada instancia de `query_client` recibe respuestas en su propia cola,
-   comprueba que `correlationId` coincide con `requestId` y registra los
-   estados no disponibles. El nombre de la cola y su binding deben provisionarse
-   con permisos OAuth de lectura limitados a la instancia.
+4. Cada instancia de `query_client` declara una cola de respuesta no durable,
+   exclusiva y auto-delete, y la enlaza al exchange con permisos OAuth
+   limitados a esa instancia. Recibe respuestas, comprueba que `correlationId`
+   coincide con `requestId` y registra los estados no disponibles.
 
 ## Identidad y seguridad entre servicios
 

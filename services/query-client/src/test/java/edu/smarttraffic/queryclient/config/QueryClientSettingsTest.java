@@ -11,6 +11,7 @@ class QueryClientSettingsTest {
     void parsesMultipleZonesAndDefaultsPollingIntervals() {
         QueryClientSettings settings = QueryClientSettings.from(Map.of(
                 "RABBITMQ_QUERY_QUEUE", "query-requests-it",
+                "RABBITMQ_QUERY_ANSWERS_EXCHANGE", "query-answers-it",
                 "RABBITMQ_QUERY_REPLY_QUEUE", "query-replies-it",
                 "RABBITMQ_QUERY_CLIENT_ID", "client-it",
                 "QUERY_ZONE_IDS", " zone-a,zone-b "));
@@ -25,11 +26,13 @@ class QueryClientSettingsTest {
     void rejectsDuplicateZonesAndInvalidIntervals() {
         assertThrows(IllegalArgumentException.class, () -> QueryClientSettings.from(Map.of(
                 "RABBITMQ_QUERY_QUEUE", "query-requests-it",
+                "RABBITMQ_QUERY_ANSWERS_EXCHANGE", "query-answers-it",
                 "RABBITMQ_QUERY_REPLY_QUEUE", "query-replies-it",
                 "RABBITMQ_QUERY_CLIENT_ID", "client-it",
                 "QUERY_ZONE_IDS", "zone-a,zone-a")));
         assertThrows(IllegalArgumentException.class, () -> QueryClientSettings.from(Map.of(
                 "RABBITMQ_QUERY_QUEUE", "query-requests-it",
+                "RABBITMQ_QUERY_ANSWERS_EXCHANGE", "query-answers-it",
                 "RABBITMQ_QUERY_REPLY_QUEUE", "query-replies-it",
                 "RABBITMQ_QUERY_CLIENT_ID", "client-it",
                 "QUERY_ZONE_IDS", "zone-a",

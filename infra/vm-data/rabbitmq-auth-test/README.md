@@ -35,7 +35,7 @@ docker compose --file infra\vm-data\rabbitmq\compose.yaml config
 ```
 
 After Steven's review and once Docker Engine is running, the fixture can be
-started with `docker compose --file infra\vm-data\rabbitmq\compose.yaml up`.
+started with `docker compose --project-name smarttraffic-pr26-it --file infra\vm-data\rabbitmq\compose.yaml up`.
 The isolated AMQP integration suite is in this directory and does not modify
 the root Maven reactor. Running `mvn test` here without
 `RABBITMQ_IT=true` skips the broker tests.
@@ -72,7 +72,38 @@ credentials are stored only in generated files outside the repository
 (`application-test.yml` and `test-clients.env`). Do not copy them into
 production or share the generated private keys.
 
-The test query-client identity includes write access to RabbitMQ's `amq.default`
-exchange because the client publishes requests to its configured queue through
-that exchange. This permission exists only in the disposable `smarttraffic-it`
-vhost fixture and must not be copied to production identities.
+The query-client's broker-backed round-trip test is in the root Maven reactor.
+With the Auth Server and fixture running, execute it from a disposable Maven
+container on the same Compose network:
+
+```powershell
+$testAssets = Join-Path $env:TEMP 'smarttraffic-rabbitmq-it'
+$repository = (Get-Location).Path
+docker run --rm `
+  --network smarttraffic-pr26-it_rabbitmq-it `
+  --add-host host.docker.internal:host-gateway `
+  --env-file (Join-Path $testAssets 'test-clients.env') `
+  -e RABBITMQ_IT=true `
+  -e RABBITMQ_IT_JWT_PRIVATE_KEY=/test-assets/jwt-private.pem `
+  -e RABBITMQ_IT_CA_CERT=/test-assets/oauth-ca.pem `
+  -e RABBITMQ_IT_AUTH_BASE_URL=https://host.docker.internal:8443 `
+  -e RABBITMQ_IT_HOST=rabbitmq `
+  -e RABBITMQ_IT_PORT=5671 `
+  -v "${repository}:/workspace" `
+  -v "${testAssets}:/test-assets:ro" `
+  -w /workspace `
+  maven:3.9.9-eclipse-temurin-17 mvn -B -pl services/query-client -am test
+```
+
+The round-trip creates an exclusive response queue, confirms it cannot be
+declared by another connection while owned, publishes a random traffic update,
+checks the alert observer, and verifies a populated response with matching
+correlation. Closing the query connection must auto-delete the queue. It uses
+only the generated test identities and strict CA/hostname validation.
+
+The test query-client identity has `write` on the request queue via
+`amq.default`, `configure`/`write`/`read` on its response queue, and `write` on
+the response exchange/routing key needed for binding plus `read` on that
+exchange. These scopes and all
+resources are confined to the disposable `smarttraffic-it` vhost and must not
+be copied to production identities.

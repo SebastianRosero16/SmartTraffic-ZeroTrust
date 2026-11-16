@@ -8,6 +8,7 @@ import java.util.Objects;
 
 public record QueryClientSettings(
         String requestsQueue,
+        String answersExchange,
         String replyQueue,
         String instanceId,
         List<ZoneId> zoneIds,
@@ -16,6 +17,7 @@ public record QueryClientSettings(
 
     public QueryClientSettings {
         requestsQueue = required(requestsQueue, "RABBITMQ_QUERY_QUEUE");
+        answersExchange = required(answersExchange, "RABBITMQ_QUERY_ANSWERS_EXCHANGE");
         replyQueue = required(replyQueue, "RABBITMQ_QUERY_REPLY_QUEUE");
         instanceId = required(instanceId, "RABBITMQ_QUERY_CLIENT_ID");
         if (zoneIds == null || zoneIds.isEmpty()) {
@@ -34,6 +36,7 @@ public record QueryClientSettings(
         Objects.requireNonNull(environment, "Environment is required");
         return new QueryClientSettings(
                 environment.get("RABBITMQ_QUERY_QUEUE"),
+                environment.get("RABBITMQ_QUERY_ANSWERS_EXCHANGE"),
                 environment.get("RABBITMQ_QUERY_REPLY_QUEUE"),
                 environment.get("RABBITMQ_QUERY_CLIENT_ID"),
                 parseZones(required(environment, "QUERY_ZONE_IDS")),

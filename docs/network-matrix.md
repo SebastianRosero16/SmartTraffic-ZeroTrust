@@ -49,10 +49,11 @@ lógicos; no significan que esos flujos ya estén habilitados.
 La base publicada `develop` (`bdff99f2978f26ce8683c2f069a9a6b047925cd3`) aún no
 incluye `alert-dispatcher` ni `query-client`; los módulos se proponen en la PR
 de integración actual y requieren revisión antes de estar disponibles en un
-clon limpio. El flujo completo de alertas y consultas tampoco se ha validado
-con un broker. En el checkout de trabajo, `mvn -B test` ejecutó 100 casos: 96
-aprobados y 4 pruebas de integración omitidas por requerir servicios externos.
-Ese resultado no sustituye la validación con brokers.
+clon limpio. El round-trip de alertas y consultas pasó contra el fixture
+RabbitMQ desechable; eso no valida la topología ni las identidades productivas.
+En el checkout de trabajo, `mvn -B test` ejecutó 100 casos: 96 aprobados y 4
+pruebas de integración omitidas por requerir servicios externos. Ese resultado
+anterior no sustituye la validación con brokers.
 
 ## Flujos de aplicación
 
@@ -64,12 +65,12 @@ Ese resultado no sustituye la validación con brokers.
 | Archivador → PostgreSQL | `traffic_archiver` abre conexión hacia PostgreSQL en `vm-data`. | Escrituras históricas: archivador → PostgreSQL. | PostgreSQL con Spring Data JPA/Hibernate; puerto por definir. | Guardar lecturas históricas y auditoría según el esquema aprobado. | PostgreSQL y Spring Data JPA/Hibernate: requisitos; esquema, credenciales, IP y puerto: pendientes. |
 | Procesador → RabbitMQ | `traffic_density_processor` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: procesador → exchange `traffic_updates`. | RabbitMQ con `rabbitmq_auth_backend_oauth2` por AMQPS; puerto por definir. | Publicar estados calculados para consumidores independientes. | Publicador OAuth2/AMQPS en el checkout; requiere permiso de escritura al exchange. Topología/ACL, IP y puerto de producción pendientes; la prueba aislada no define producción. |
 | RabbitMQ → backend del dashboard | `user_dashboard_backend` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → backend, desde `dashboard_updates_queue` por defecto. | RabbitMQ con `rabbitmq_auth_backend_oauth2`; AMQPS configurado por el cliente. | Entregar actualizaciones para presentación. | Consumidor OAuth2/AMQPS implementado; la cola debe existir y estar enlazada antes del arranque. El nombre por defecto, permisos de lectura, IP, puerto y validación con broker siguen pendientes. |
-| RabbitMQ → dispatcher de alertas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → dispatcher, desde una cola de alertas. | OAuth2/AMQPS; puerto por definir. | Actualizar la réplica local y registrar transiciones como alertas. | Servicio y pruebas unitarias incluidos en esta propuesta; topología/ACL, IP, puerto y validación con broker pendientes. |
+| RabbitMQ → dispatcher de alertas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → dispatcher, desde una cola de alertas. | OAuth2/AMQPS; puerto por definir. | Actualizar la réplica local y notificar transiciones de estado mediante Observer. | Round-trip probado con el fixture OAuth/TLS aislado; cola, ACL, IP y puerto productivos pendientes. |
 | Backend → dashboard web | El navegador que carga `dashboard.html` abre la conexión WebSocket hacia `user_dashboard_backend`. | Actualizaciones: backend → navegador. | WebSocket same-origin en `/ws/traffic`; `ws` o `wss` según el esquema HTTP del backend. | Presentar tráfico en tiempo real. | Backend e interfaz implementados; endpoint provisional. Puerto expuesto, proxy TLS, reglas de red y validación end-to-end pendientes. |
-| Cliente de consulta → RabbitMQ | Cada instancia de `query_client` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: cliente → cola de solicitudes; incluye zonas, `requestId`, `correlationId`, `instanceId` y `replyTo`. | OAuth2/AMQPS; puerto por definir. | Enviar consultas asíncronas y esperar respuestas. | Servicio y pruebas unitarias incluidos en esta propuesta; cola, permisos, IP, puerto y validación con broker pendientes. |
-| RabbitMQ → dispatcher de consultas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: RabbitMQ → dispatcher, desde la cola de solicitudes. | OAuth2/AMQPS; puerto por definir. | Entregar consulta para responder desde la réplica local. | Cola, permisos y pruebas con broker pendientes. |
-| Dispatcher → RabbitMQ | `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Respuesta: dispatcher → exchange de respuestas, con `correlationId` y routing key de instancia. | OAuth2/AMQPS; puerto por definir. | Publicar la respuesta confirmada para una instancia. | Exchange, bindings, permisos y pruebas con broker pendientes. |
-| RabbitMQ → cliente de consulta | Cada instancia de `query_client` abre conexión hacia RabbitMQ en `vm-data`. | Respuesta: RabbitMQ → cola propia de respuesta → cliente. | OAuth2/AMQPS; puerto por definir. | Entregar y correlacionar respuestas por instancia. | Cola, binding, permisos y pruebas con broker pendientes. |
+| Cliente de consulta → RabbitMQ | Cada instancia de `query_client` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: cliente → cola de solicitudes; incluye zonas, `requestId`, `correlationId`, `instanceId` y `replyTo`. | OAuth2/AMQPS; puerto por definir. | Enviar consultas asíncronas y esperar respuestas. | Round-trip probado con el fixture. El cliente declara una cola no durable, exclusiva y auto-delete; permisos, IP y puerto productivos pendientes. |
+| RabbitMQ → dispatcher de consultas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: RabbitMQ → dispatcher, desde la cola de solicitudes. | OAuth2/AMQPS; puerto por definir. | Entregar consulta para responder desde la réplica local. | Consulta y respuesta probadas con el fixture; cola, permisos, IP y puerto productivos pendientes. |
+| Dispatcher → RabbitMQ | `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Respuesta: dispatcher → exchange de respuestas, con `correlationId` y routing key de instancia. | OAuth2/AMQPS; puerto por definir. | Publicar la respuesta confirmada para una instancia. | Publicación confirmada y ruta probadas con el fixture; exchange, bindings, permisos e IP productivos pendientes. |
+| RabbitMQ → cliente de consulta | Cada instancia de `query_client` abre conexión hacia RabbitMQ en `vm-data`. | Respuesta: RabbitMQ → cola exclusiva propia → cliente. | OAuth2/AMQPS; puerto por definir. | Entregar y correlacionar respuestas por instancia. | Respuesta no vacía y correlación verificadas; la cola se elimina al cerrar la conexión. Topología y permisos productivos pendientes. |
 
 ## Inventario de endpoints y puertos observados
 
@@ -126,12 +127,12 @@ del fixture `smarttraffic-rabbitmq-it` solo corresponden al publicador y lector
 de prueba, no a una política productiva.
 
 Los nombres, scopes y recursos `*-it` del fixture RabbitMQ son exclusivos de
-pruebas; esa suite valida un publicador y un lector, no los consumidores
-productivos de alertas/consultas. La ejecución del 15/11 aceptó un token
-firmado por una clave confiable con otro `iss`; se conserva como observación
-limitada a ese fixture/configuración/ejecución. No debe afirmarse que esa
-configuración valide igualdad de `iss` ni generalizar el resultado a toda
-configuración/plugin.
+pruebas; la suite OAuth valida publicador/lector y el round-trip de alertas y
+consultas usa identidades desechables adicionales. La ejecución del 16/11 aceptó
+un token firmado por una clave confiable con otro `iss`; se conserva como
+observación limitada a ese fixture/configuración/ejecución. No debe afirmarse
+que esa configuración valide igualdad de `iss` ni generalizar el resultado a
+toda configuración/plugin.
 
 ## Autenticación y distribución de claves
 

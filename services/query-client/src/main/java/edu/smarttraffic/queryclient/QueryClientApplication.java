@@ -4,19 +4,31 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.smarttraffic.queryclient.adapter.out.rabbitmq.RabbitMqTrafficQueryClient;
 import edu.smarttraffic.queryclient.config.QueryClientSettings;
 import edu.smarttraffic.rabbitmqsecurity.RabbitMqOAuthClient;
-import java.util.Map;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
 
-public final class QueryClientApplication {
-    private QueryClientApplication() {
+@SpringBootApplication
+public class QueryClientApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(QueryClientApplication.class, args);
     }
 
-    public static void main(String[] args) {
-        Map<String, String> environment = System.getenv();
-        RabbitMqTrafficQueryClient queryClient = new RabbitMqTrafficQueryClient(
-                new RabbitMqOAuthClient(environment),
-                QueryClientSettings.from(environment),
-                new ObjectMapper().findAndRegisterModules());
-        Runtime.getRuntime().addShutdownHook(new Thread(queryClient::close, "query-client-shutdown"));
-        queryClient.run();
+    @Bean
+    RabbitMqOAuthClient rabbitMqOAuthClient() {
+        return new RabbitMqOAuthClient(System.getenv());
+    }
+
+    @Bean
+    QueryClientSettings queryClientSettings() {
+        return QueryClientSettings.from(System.getenv());
+    }
+
+    @Bean(initMethod = "start", destroyMethod = "close")
+    RabbitMqTrafficQueryClient rabbitMqTrafficQueryClient(
+            RabbitMqOAuthClient oauthClient,
+            QueryClientSettings settings,
+            ObjectMapper objectMapper) {
+        return new RabbitMqTrafficQueryClient(oauthClient, settings, objectMapper);
     }
 }

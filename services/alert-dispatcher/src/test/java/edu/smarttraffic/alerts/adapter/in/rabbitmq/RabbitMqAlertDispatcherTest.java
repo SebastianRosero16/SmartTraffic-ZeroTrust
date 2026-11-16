@@ -10,6 +10,8 @@ import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Envelope;
 import edu.smarttraffic.alerts.application.TrafficStateStore;
+import edu.smarttraffic.alerts.application.TrafficAlertPublisher;
+import edu.smarttraffic.alerts.application.TrafficAlert;
 import edu.smarttraffic.alerts.config.AlertDispatcherSettings;
 import edu.smarttraffic.contracts.TrafficMetrics;
 import edu.smarttraffic.contracts.TrafficQuery;
@@ -19,6 +21,7 @@ import edu.smarttraffic.contracts.ZoneId;
 import edu.smarttraffic.rabbitmqsecurity.RabbitMqOAuthClient;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -79,7 +82,38 @@ class RabbitMqAlertDispatcherTest {
         verify(channel).basicNack(DELIVERY_TAG, false, false);
     }
 
+    @Test
+    void publishesAlertToObserversWhenTrafficStatusChanges() throws Exception {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        TrafficAlertPublisher publisher = new TrafficAlertPublisher();
+        AtomicReference<TrafficAlert> observed = new AtomicReference<>();
+        publisher.subscribe(observed::set);
+        RabbitMqAlertDispatcher dispatcher = dispatcher(new TrafficStateStore(), publisher, mapper);
+        TrafficUpdate update = new TrafficUpdate(
+                new ZoneId("zone-a"),
+                Instant.parse("2026-11-14T20:00:00Z"),
+                new TrafficMetrics(17, 8.5),
+                TrafficStatus.MODERADA);
+        Channel channel = mock(Channel.class);
+
+        dispatcher.processUpdate(channel, ENVELOPE, mapper.writeValueAsBytes(update));
+
+        assertEquals(new TrafficAlert(
+                new ZoneId("zone-a"),
+                TrafficStatus.DESPEJADA,
+                TrafficStatus.MODERADA,
+                update.measuredAt()), observed.get());
+        verify(channel).basicAck(DELIVERY_TAG, false);
+    }
+
     private static RabbitMqAlertDispatcher dispatcher(TrafficStateStore store, ObjectMapper mapper) {
+        return dispatcher(store, new TrafficAlertPublisher(), mapper);
+    }
+
+    private static RabbitMqAlertDispatcher dispatcher(
+            TrafficStateStore store,
+            TrafficAlertPublisher publisher,
+            ObjectMapper mapper) {
         return new RabbitMqAlertDispatcher(
                 mock(RabbitMqOAuthClient.class),
                 new AlertDispatcherSettings(
@@ -88,6 +122,7 @@ class RabbitMqAlertDispatcherTest {
                         "query-answers-it",
                         Map.of("client-it", "query-replies-it")),
                 store,
+                publisher,
                 mapper);
     }
 }
