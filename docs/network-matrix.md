@@ -25,12 +25,15 @@ solo lo son si el enunciado los fija.
 
 **Estado de revisión:** Steven aprobó la precisión del texto compartido para
 Auth, Kafka y RabbitMQ; Héctor aprobó los flujos lógicos, pero no la matriz
-completa como base de producción. Para la demostración se decidió US East
-(Ohio), `us-east-2`, una AZ, cinco subredes con IPv4 públicas dinámicas,
-administración por Session Manager y port forwarding de Session Manager para el
-dashboard, sin SSH ni ingress público. Siguen pendientes los CIDR, la AZ
-disponible para la cuenta, la identidad IAM del portátil, el inventario y los
-listeners/puertos de producción.
+completa como base de producción. La PR #23 de infraestructura se fusionó en
+`develop` (`bdff99f2978f26ce8683c2f069a9a6b047925cd3`). Para la demostración se
+decidió US East (Ohio), `us-east-2`, una AZ, cinco subredes con IPv4 públicas
+dinámicas, administración por Session Manager y port forwarding de Session
+Manager para el dashboard, sin SSH ni ingress público. La cuenta muestra
+`us-east-2a`, `us-east-2b` y `us-east-2c` disponibles; la AZ final se elegirá
+tras comprobar los tipos de instancia. Siguen pendientes los CIDR, la identidad
+IAM individual de Héctor, sus permisos, el inventario y los listeners/puertos
+de producción.
 
 **Alcance actual de Terraform:** `network_rules` está vacío por defecto. La
 única regla de salida automática es TCP 443 para SSM, imágenes y actualizaciones;
@@ -43,15 +46,13 @@ lógicos; no significan que esos flujos ya estén habilitados.
 
 ## Disponibilidad de los servicios
 
-Al verificar el HEAD remoto, `develop` apunta a
-`70f2266b2d7e3ff9a981837a492a9946f6032502`. Esa base publicada no incluye
-`alert-dispatcher` ni `query-client`; Steven confirmó que tampoco están en su
-checkout limpio de esa base. Sus directorios y código aparecen como cambios
-locales sin seguimiento en el checkout de Sebastián. Por ello, los flujos de
-alertas y consultas describen trabajo local pendiente de revisión/publicación:
-no están disponibles al clonar `develop` ni se han validado con un broker. Las
-pruebas unitarias existentes en esa copia local no se ejecutaron durante esta
-revisión. Actualizar este estado cuando esos cambios se publiquen y revisen.
+La base publicada `develop` (`bdff99f2978f26ce8683c2f069a9a6b047925cd3`) aún no
+incluye `alert-dispatcher` ni `query-client`; los módulos se proponen en la PR
+de integración actual y requieren revisión antes de estar disponibles en un
+clon limpio. El flujo completo de alertas y consultas tampoco se ha validado
+con un broker. En el checkout de trabajo, `mvn -B test` ejecutó 100 casos: 96
+aprobados y 4 pruebas de integración omitidas por requerir servicios externos.
+Ese resultado no sustituye la validación con brokers.
 
 ## Flujos de aplicación
 
@@ -63,12 +64,12 @@ revisión. Actualizar este estado cuando esos cambios se publiquen y revisen.
 | Archivador → PostgreSQL | `traffic_archiver` abre conexión hacia PostgreSQL en `vm-data`. | Escrituras históricas: archivador → PostgreSQL. | PostgreSQL con Spring Data JPA/Hibernate; puerto por definir. | Guardar lecturas históricas y auditoría según el esquema aprobado. | PostgreSQL y Spring Data JPA/Hibernate: requisitos; esquema, credenciales, IP y puerto: pendientes. |
 | Procesador → RabbitMQ | `traffic_density_processor` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: procesador → exchange `traffic_updates`. | RabbitMQ con `rabbitmq_auth_backend_oauth2` por AMQPS; puerto por definir. | Publicar estados calculados para consumidores independientes. | Publicador OAuth2/AMQPS en el checkout; requiere permiso de escritura al exchange. Topología/ACL, IP y puerto de producción pendientes; la prueba aislada no define producción. |
 | RabbitMQ → backend del dashboard | `user_dashboard_backend` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → backend, desde `dashboard_updates_queue` por defecto. | RabbitMQ con `rabbitmq_auth_backend_oauth2`; AMQPS configurado por el cliente. | Entregar actualizaciones para presentación. | Consumidor OAuth2/AMQPS implementado; la cola debe existir y estar enlazada antes del arranque. El nombre por defecto, permisos de lectura, IP, puerto y validación con broker siguen pendientes. |
-| RabbitMQ → dispatcher de alertas | El consumidor `alert_dispatcher` abriría conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → dispatcher, desde una cola de alertas. | Diseño OAuth2/AMQPS; puerto por definir. | Actualizar la réplica local y registrar transiciones como alertas. | No existe en la base publicada ni en el checkout limpio de Steven; solo está como código local de Sebastián. No está publicado ni validado con broker. |
+| RabbitMQ → dispatcher de alertas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → dispatcher, desde una cola de alertas. | OAuth2/AMQPS; puerto por definir. | Actualizar la réplica local y registrar transiciones como alertas. | Servicio y pruebas unitarias incluidos en esta propuesta; topología/ACL, IP, puerto y validación con broker pendientes. |
 | Backend → dashboard web | El navegador que carga `dashboard.html` abre la conexión WebSocket hacia `user_dashboard_backend`. | Actualizaciones: backend → navegador. | WebSocket same-origin en `/ws/traffic`; `ws` o `wss` según el esquema HTTP del backend. | Presentar tráfico en tiempo real. | Backend e interfaz implementados; endpoint provisional. Puerto expuesto, proxy TLS, reglas de red y validación end-to-end pendientes. |
-| Cliente de consulta → RabbitMQ | Cada cliente `query_client` abriría conexión hacia RabbitMQ en `vm-data`. | Solicitud: cliente → cola de solicitudes; incluye zonas, `requestId`, `correlationId`, `instanceId` y `replyTo`. | Diseño OAuth2/AMQPS; puerto por definir. | Enviar consultas asíncronas y esperar respuestas. | No existe en la base publicada ni en el checkout limpio de Steven; solo está como código local de Sebastián. No está publicado ni validado con broker. |
-| RabbitMQ → dispatcher de consultas | El consumidor `alert_dispatcher` abriría conexión hacia RabbitMQ en `vm-data`. | Solicitud: RabbitMQ → dispatcher, desde la cola de solicitudes. | Diseño OAuth2/AMQPS; puerto por definir. | Entregar consulta para responder desde la réplica local. | Flujo de arquitectura/código local no publicado; cola, permisos y pruebas con broker pendientes. |
-| Dispatcher → RabbitMQ | `alert_dispatcher` abriría conexión hacia RabbitMQ en `vm-data`. | Respuesta: dispatcher → exchange de respuestas, con `correlationId` y routing key de instancia. | Diseño OAuth2/AMQPS; puerto por definir. | Publicar la respuesta confirmada para una instancia. | Flujo de arquitectura/código local no publicado; exchange, bindings, permisos y pruebas con broker pendientes. |
-| RabbitMQ → cliente de consulta | Cada cliente `query_client` abriría conexión hacia RabbitMQ en `vm-data`. | Respuesta: RabbitMQ → cola propia de respuesta → cliente. | Diseño OAuth2/AMQPS; puerto por definir. | Entregar y correlacionar respuestas por instancia. | Flujo de arquitectura/código local no publicado; cola, binding, permisos y pruebas con broker pendientes. |
+| Cliente de consulta → RabbitMQ | Cada instancia de `query_client` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: cliente → cola de solicitudes; incluye zonas, `requestId`, `correlationId`, `instanceId` y `replyTo`. | OAuth2/AMQPS; puerto por definir. | Enviar consultas asíncronas y esperar respuestas. | Servicio y pruebas unitarias incluidos en esta propuesta; cola, permisos, IP, puerto y validación con broker pendientes. |
+| RabbitMQ → dispatcher de consultas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: RabbitMQ → dispatcher, desde la cola de solicitudes. | OAuth2/AMQPS; puerto por definir. | Entregar consulta para responder desde la réplica local. | Cola, permisos y pruebas con broker pendientes. |
+| Dispatcher → RabbitMQ | `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Respuesta: dispatcher → exchange de respuestas, con `correlationId` y routing key de instancia. | OAuth2/AMQPS; puerto por definir. | Publicar la respuesta confirmada para una instancia. | Exchange, bindings, permisos y pruebas con broker pendientes. |
+| RabbitMQ → cliente de consulta | Cada instancia de `query_client` abre conexión hacia RabbitMQ en `vm-data`. | Respuesta: RabbitMQ → cola propia de respuesta → cliente. | OAuth2/AMQPS; puerto por definir. | Entregar y correlacionar respuestas por instancia. | Cola, binding, permisos y pruebas con broker pendientes. |
 
 ## Inventario de endpoints y puertos observados
 
@@ -85,6 +86,8 @@ de producción.
 | RabbitMQ | Clientes configuran `RABBITMQ_HOST`/`RABBITMQ_PORT` y usan AMQPS, validando certificado y hostname del broker. La consulta JWKS del broker es HTTPS independiente. | Pendiente; listener, host, puerto, CA y SAN productivos no están acordados. | El fixture 4.3.7 usa OAuth2 (`rabbitmq_auth_backend_oauth2`), SASL PLAIN para transportar el token, RS256, JWKS HTTPS, validación de audience y `exp`, y no permite anónimo. `5671` es interno a la red del fixture, sin publicación al host; `8443` es del Auth Server de prueba. Ninguno es asignación productiva. |
 | PostgreSQL | El archivador usa `SPRING_DATASOURCE_URL` JDBC. | Pendiente; host y puerto entre VMs no están acordados. | El fixture de integración publica `127.0.0.1:5433` hacia `5432` del contenedor; ambos son datos de prueba local. |
 | Backend del dashboard | `SERVER_PORT` tiene default HTTP de desarrollo `8080`; el navegador usa HTTP/WebSocket same-origin en `/ws/traffic`. | Pendiente; exposición, proxy/ruta y terminación TLS deben acordarse. | El default local no autoriza exposición en AWS. |
+| Administración remota | El portátil de Héctor administra las VMs; Ansible necesita que `ansible_host` y `ansible_port` se asignen a hosts/grupos del inventario, no solo como datos anidados. | SSM, sin puerto administrativo entrante en las VMs. | Usar los ID de instancia y un plugin de conexión SSM compatible; mantener el inventario generado localmente e ignorado por Git. Se eligió explorar un usuario IAM individual con MFA porque IAM Identity Center no está disponible en esta cuenta. La identidad y sus permisos mínimos aún no se han creado; se requieren también el rol de instancia, SSM Agent y conectividad saliente a Systems Manager. No se autoriza SSH público. |
+| Portátil de Héctor → dashboard | El navegador de Héctor conecta al backend de `vm-app` mediante port forwarding de Session Manager. | HTTP/WebSocket a través del túnel; el listener productivo está por confirmar. | El acceso público no está habilitado; el túnel se inicia desde el portátil autorizado. | Pendiente: autorizar la identidad IAM individual con MFA para SSM/port forwarding de las instancias etiquetadas y probar desde su portátil. |
 Para tráfico entre VMs, no usar `kafka`, `localhost` ni alias de una red Docker
 como destino. El listener Kafka debe anunciar un nombre o dirección privada
 alcanzable y coherente con el SAN del certificado; el listener de control KRaft
@@ -115,7 +118,7 @@ Los scopes OAuth no sustituyen autorización por recursos:
 | Broker | Permisos mínimos por identidad (propuesta; no aplicados ni aprobados para producción) |
 |---|---|
 | Kafka | Simulador: `WRITE`/`DESCRIBE` sobre el tópico y `IDEMPOTENT_WRITE` de clúster si aplica; procesador y archivador: `READ`/`DESCRIBE` sobre el tópico y `READ` en sus grupos. Kafka Streams puede necesitar permisos acotados a tópicos internos y operaciones de clúster; confirmarlos contra la topología real. |
-| RabbitMQ | Procesador: `write` solo al exchange de actualizaciones; backend: `read` solo a su cola. Los flujos de alertas/consultas no están en la base publicada; si se aprueban, asignar lectura/escritura solo a las colas/exchanges necesarios. `configure` solo si el servicio debe crear recursos o bindings; no otorgarlo por defecto. |
+| RabbitMQ | Procesador: `write` solo al exchange de actualizaciones; backend: `read` solo a su cola. Para los flujos propuestos de alertas/consultas, asignar lectura/escritura solo a las colas/exchanges aprobados. `configure` solo si el servicio debe crear recursos o bindings; no otorgarlo por defecto. |
 
 `KAFKA_OAUTH_SCOPE` es opcional: los scopes OAuth no autorizan operaciones
 Kafka; las ACLs del broker son la política de recursos. En RabbitMQ, los scopes
@@ -152,8 +155,8 @@ acordarse antes de crear reglas.
 |---|---|---|---|---|---|
 | VM → DNS | El host o servicio que necesite resolver nombres inicia la consulta hacia el resolver configurado. | Consulta y respuesta DNS. | DNS; transporte, servidor y puerto por definir. | Resolución de nombres, solo si la configuración lo requiere. | Condicional y pendiente; no se asigna resolver. |
 | VM → NTP | El host o servicio de tiempo inicia la conexión hacia la fuente de tiempo configurada. | Solicitud y respuesta de sincronización de tiempo. | NTP; servidor, transporte y puerto por definir. | Sincronizar reloj, si se habilita. | Condicional y pendiente; no se asigna servidor. |
-| Portátil de Héctor → VMs | El portátil inicia la sesión; el SSM Agent de la VM mantiene el canal saliente hacia Systems Manager. | Comandos y respuestas de administración por el canal de SSM. | AWS Systems Manager Session Manager; sin SSH público ni ingress administrativo. | Administrar las VM sin ejecutar microservicios en el portátil. | Decisión de demo: Session Manager, rol de instancia `AmazonSSMManagedInstanceCore` y salida TCP 443. Pendiente configurar identidad/IAM y permisos mínimos de Héctor, acceso desde WSL2 a las API de AWS, etiquetas/inventario y validar SSM Agent/conectividad. |
-| Portátil de Héctor → dashboard | El portátil abre port forwarding de Session Manager hacia el listener de `vm-app`; el navegador usa el puerto local del túnel. | HTTP/WebSocket entre el navegador y el backend a través del túnel. | Session Manager port forwarding; no requiere ingress público. | Presentar el dashboard desde el portátil. | Estrategia decidida. Pendiente configurar IAM/CLI/plugin y confirmar listener y puertos local/remoto. No habilita reglas de red de aplicación entre las VM. |
+| Portátil de Héctor → VMs | El portátil inicia la sesión; el SSM Agent de la VM mantiene el canal saliente hacia Systems Manager. | Comandos y respuestas de administración por el canal de SSM. | AWS Systems Manager Session Manager; sin SSH público ni ingress administrativo. | Administrar las VM sin ejecutar microservicios en el portátil. | Decisión de demo: Session Manager, rol de instancia `AmazonSSMManagedInstanceCore` y salida TCP 443. Pendiente crear el usuario IAM individual de Héctor con MFA y permisos mínimos, configurar acceso a las API de AWS, etiquetas/inventario y validar SSM Agent/conectividad. |
+| Portátil de Héctor → dashboard | El portátil abre port forwarding de Session Manager hacia el listener de `vm-app`; el navegador usa el puerto local del túnel. | HTTP/WebSocket entre el navegador y el backend a través del túnel. | Session Manager port forwarding; no requiere ingress público. | Presentar el dashboard desde el portátil. | Estrategia decidida. Pendiente autorizar la identidad IAM de Héctor y configurar IAM/CLI/plugin; confirmar listener y puertos local/remoto. No habilita reglas de red de aplicación entre las VM. |
 | VM → Internet para SSM y aprovisionamiento | Cada VM inicia conexiones salientes hacia los endpoints de Systems Manager, repositorios de imágenes y repositorios del sistema operativo. | Solicitud de conexión/descarga: VM → Internet; respuesta por la misma conexión. | TCP 443 a IPv4 Internet mediante IPv4 pública dinámica e Internet Gateway; no se crea NAT Gateway. | Registrar y administrar las instancias con SSM; descargar imágenes y actualizaciones. | Salida configurada por defecto solo en TCP 443. Security Groups no filtran por FQDN, así que los destinos no quedan limitados a una lista de dominios. DNS/NTP y otros destinos opcionales no se habilitan como reglas de egress aquí y deberán verificarse en el despliegue. |
 
 ## Uso posterior para reglas `nftables`

@@ -5,7 +5,7 @@
 SmartTraffic propone simular lecturas aleatorias de sensores de tráfico,
 calcular el estado de cada zona, distribuir actualizaciones y alertas, responder
 consultas y conservar un histórico. La descripción de este documento está
-alineada con el [README](../README.md) vigente en `develop`.
+alineada con el [README](../README.md) vigente en la rama de trabajo.
 
 El Proyecto 12 exige cinco VMs, siete microservicios, Java/Spring Boot con
 JDK 17 o superior, lecturas aleatorias, Kafka y Kafka Streams/KTable, RabbitMQ,
@@ -38,6 +38,19 @@ valores provisionales de desarrollo; la topología y los permisos definitivos
 siguen pendientes. Los requisitos de ejecución están en el
 [README del backend](../services/user-dashboard-backend/README.md).
 
+`alert-dispatcher` y `query-client` ya implementan el consumo y respuesta a
+consultas correlacionadas, así como alertas de registro por transición de
+estado. Ambos tienen pruebas unitarias, pero el flujo conjunto aún no se ha
+validado con un broker RabbitMQ. Las reglas de notificación, los nombres de
+topología de producción y los permisos definitivos siguen pendientes.
+
+Esta propuesta incorpora `alert-dispatcher` y `query-client`, que no estaban en
+la base `develop` desde la que se preparó la integración
+(`bdff99f2978f26ce8683c2f069a9a6b047925cd3`). `mvn -B test` ejecutó 100 casos:
+96 aprobados y 4 pruebas de integración omitidas por requerir servicios
+externos. El flujo conjunto de alertas y consultas aún requiere validación con
+un broker RabbitMQ.
+
 ## Responsabilidades de los servicios
 
 - **`auth_server`:** autenticar los servicios y emitir JWT, según el requisito.
@@ -54,10 +67,12 @@ siguen pendientes. Los requisitos de ejecución están en el
 - **`user_dashboard_backend`:** consumir actualizaciones de RabbitMQ y enviarlas
   al navegador mediante WebSocket.
 - **`alert_dispatcher`:** consumir actualizaciones, mantener una réplica local
-  del estado por zona, detectar cambios de interés y procesar consultas a
-  partir de esa réplica.
-- **`query_client`:** simular consultas, asignar identificadores de correlación
-  y recibir las respuestas destinadas a cada instancia.
+  del estado por zona, registrar los cambios de estado como alertas y procesar
+  consultas desde esa réplica. La regla de transición actual es una decisión
+  provisional de implementación, no una política final de notificación.
+- **`query_client`:** enviar consultas con `requestId`, lista de zonas e
+  `instanceId`, asignar `correlationId`/`replyTo` a cada publicación y recibir
+  respuestas destinadas a su instancia.
 - **`dashboard.html`:** mostrar en tiempo real los datos recibidos por el
   backend del dashboard.
 
@@ -95,7 +110,8 @@ herramientas como Vagrant o Ansible.
    `alert_updates_queue` como propuestas pendientes de aprobación.
 5. `user_dashboard_backend` consume la cola del dashboard y transmite los
    datos a `dashboard.html` por WebSocket. `alert_dispatcher` consume la cola
-   de alertas, actualiza su réplica local y evalúa las alertas.
+   de alertas, conserva el último estado por zona y registra una alerta cuando
+   observa una transición, incluida la recuperación.
 
 ### Persistencia histórica
 
@@ -106,17 +122,18 @@ requieren decisiones de diseño y pruebas.
 
 ### Consultas y respuestas correlacionadas
 
-1. Cada instancia de `query_client` publica una solicitud en la Work Queue
-   `query_traffic_queue` con `correlationId` y el destino de respuesta en
-   `replyTo`.
+1. Cada instancia de `query_client` publica una solicitud con uno o más
+   `zoneIds`, un `requestId`, `correlationId`, su `instanceId` y el destino de
+   respuesta en `replyTo`.
 2. `alert_dispatcher` consume la solicitud y obtiene el estado solicitado de
    su réplica local; no consulta PostgreSQL directamente.
 3. El dispatcher publica la respuesta en el Topic Exchange `query_answers`,
    conservando el `correlationId` y usando una routing key asociada a la
    instancia solicitante.
-4. Cada instancia de `query_client` recibe respuestas en su propia cola. Se
-   requieren colas de respuesta independientes, un identificador de instancia
-   y manejo de espera y fallos; el nombre y binding exactos quedan por definir.
+4. Cada instancia de `query_client` recibe respuestas en su propia cola,
+   comprueba que `correlationId` coincide con `requestId` y registra los
+   estados no disponibles. El nombre de la cola y su binding deben provisionarse
+   con permisos OAuth de lectura limitados a la instancia.
 
 ## Identidad y seguridad entre servicios
 
