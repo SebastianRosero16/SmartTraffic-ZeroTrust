@@ -70,6 +70,17 @@ docker compose --project-name smarttraffic-local-demo `
   --file infra\local-demo\compose.yaml down
 ```
 
+After `down` completes, remove the generated credentials, certificates, and
+other temporary test assets. For the default output directory shown above:
+
+```powershell
+$expectedAssets = Join-Path $env:TEMP 'smarttraffic-local-demo'
+if ([IO.Path]::GetFullPath($assets) -ne [IO.Path]::GetFullPath($expectedAssets)) {
+  throw "Refusing to remove unexpected demo assets path: $assets"
+}
+Remove-Item -LiteralPath $assets -Recurse -Force
+```
+
 `down` preserves the named local data volumes. Add `-v` only when intentionally
 discarding the demo's Kafka, RabbitMQ, PostgreSQL, and Maven cache data. The
 existing `smarttraffic-kafka-it` container is a separate project and must not
