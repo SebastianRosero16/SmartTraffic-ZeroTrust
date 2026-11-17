@@ -1,0 +1,118 @@
+# AWS deployment workflow
+
+The five role-specific EC2 instances run separate Compose projects. Their
+Security Groups have no application ingress by default; services communicate
+over private addresses:
+
+| VM | Compose file | Services |
+|---|---|---|
+| `vm-auth` | `infra/vm-auth/compose.yaml` | Auth Server |
+| `vm-data` | `infra/vm-data/compose.aws.yaml` | Kafka, RabbitMQ, PostgreSQL |
+| `vm-ingest` | `infra/vm-ingest/compose.yaml` | Traffic sensor simulator |
+| `vm-core` | `infra/vm-core/compose.yaml` | Traffic density processor, traffic archiver |
+| `vm-app` | `infra/vm-app/compose.yaml` | Dashboard backend, alert dispatcher, two query clients |
+
+Compose files use Linux host networking intentionally: each VM's nftables
+firewall can enforce the service-to-service policy directly. Security Groups
+and nftables deny unsolicited inbound traffic; the dashboard is available to
+the presenter only through an SSM port-forward to `127.0.0.1:8080`. Compose
+defines service listeners, but production network rules remain unconfigured
+until the owners confirm ports and flows in the
+[network matrix](../../docs/network-matrix.md).
+
+The two query clients are separate Compose services, not scaled copies. Each
+has a distinct OAuth identity, response queue, and routing key so correlated
+replies cannot be consumed by the wrong replica. Add further instances only
+with their own pre-provisioned identities and queues.
+
+## Preparation
+
+1. Keep `enable_resource_creation = false` until Terraform's plan and current
+   account costs are reviewed. EC2, EBS, public IPv4, networking, and data
+   transfer can consume the account's credits.
+2. Ansible tunnels SSH through Systems Manager; no inbound SSH Security Group
+   rule is needed. The current Terraform configuration does not provision an
+   operator SSH key. Before running Ansible, verify that the operator's public
+   key is already authorized for `ec2-user` on every target and that its
+   matching private key is local and outside Git. Do not change an existing
+   instance's key configuration or apply a plan that replaces instances
+   without reviewing the Terraform state and data-recovery plan.
+3. Use Terraform's instance outputs to copy
+   `ansible/inventory/hosts.example.yml` to the ignored `hosts.yml`, and
+   `ansible/group_vars/all.example.yml` to the ignored `group_vars/all.yml`.
+   Fill the VPC CIDR, VPC resolver address, five private VM addresses, and
+   `data_volume_ids` from Terraform there; these local inventories are
+   excluded from Git.
+4. Before deployment, verify the three EBS IDs against the AWS account. Back
+   up and manually migrate any existing Kafka, RabbitMQ, or PostgreSQL data
+   before setting `smarttraffic_data_cutover_confirmed: true`. Prepare only
+   verified blank volumes manually, or preserve their existing supported
+   `ext4`/`xfs` filesystems; never format a volume containing data. The
+   playbook checks every attached device and filesystem before changing any
+   VM, never runs a formatting command, and fails closed if a device is
+   missing or unsupported.
+5. Copy each Compose `.env.example` to a protected local deployment directory:
+   - `vm-auth.env`, `vm-data.env`, `vm-ingest.env`, `vm-core.env`, and
+     `vm-app.env` go in `SMARTTRAFFIC_SECRETS_DIR`.
+   - Each VM also has a same-named subdirectory containing its mounted keys,
+     certificates, truststores, and (for Auth) runtime configuration.
+   - Never commit that directory, `.env` files, private keys, passwords, or
+     certificates. Values marked `REPLACE_WITH_SECRET` are placeholders, not
+     usable credentials.
+6. Confirm the TLS certificate SANs match the private IPs used for Auth,
+   Kafka, and RabbitMQ; provision matching OAuth audiences and distinct client
+   identities. The playbook creates the `traffic_readings` topic and grants
+   Kafka ACLs to the simulator, processor, and archiver; the Streams ACL is
+   limited to topics prefixed by its application ID.
+
+## Operator prerequisites
+
+Run Ansible from Linux/WSL with Python, Ansible, `rsync`, AWS CLI,
+`session-manager-plugin`, OpenSSH, and AWS credentials authorized for SSM
+sessions. Install the collection and set local paths in the shell:
+
+```sh
+ansible-galaxy collection install -r requirements.yml
+export SMARTTRAFFIC_CHECKOUT=/path/to/SmartTraffic-ZeroTrust
+export SMARTTRAFFIC_SECRETS_DIR=/path/to/private/smarttraffic-secrets
+export SMARTTRAFFIC_SSH_PRIVATE_KEY=/path/to/private/ssh/key
+```
+
+After Terraform has been applied by the account owner and all inventory,
+network, certificate, and secret values are populated:
+
+```sh
+ansible-playbook --syntax-check site.yml
+ansible-playbook site.yml
+```
+
+The playbook validates the required EBS devices, every Compose configuration,
+and nftables file before starting services. It excludes local environment
+files, inventories, certificates, keys, Terraform state, and secret directories
+from source sync, then checks the remote checkout for excluded files. It builds
+each VM's required images with Docker Buildx, then starts Compose with
+`--no-build` to keep image building and container startup as separate explicit
+steps. It starts Auth first (brokers retrieve JWKS), then data services and
+Kafka topic/ACLs, consumers/dashboard/query clients, and finally the traffic
+simulator. Images are built on their destination VMs; size EC2 and EBS for the
+JVM limits plus build-time memory. The EBS mount and guarded cutover changes
+have not been exercised against AWS; do not treat local validation as a live
+deployment or data-migration test.
+
+The Auth Server runs as UID/GID `10001`. Docker grants only
+`NET_BIND_SERVICE` so the non-root Java process can listen on HTTPS port 443;
+Ansible mounts its certificates and keys read-only for group `10001`.
+
+Amazon Linux 2023 does not provide the Docker Buildx and Compose plugins in its
+configured repositories. The playbook installs pinned upstream plugin
+releases into Docker's system CLI-plugin directory and verifies their SHA-256
+checksums before use.
+
+## Presenter access
+
+The operator retains AWS account ownership and runs Terraform/Ansible. Give
+the presenter a separate, least-privilege AWS identity with SSM session and
+port-forward permissions scoped to the tagged SmartTraffic instances. Do not
+share the root user, operator SSH private key, or application credentials.
+Héctor opens the dashboard locally through SSM port forwarding; no dashboard
+port is exposed to the Internet.

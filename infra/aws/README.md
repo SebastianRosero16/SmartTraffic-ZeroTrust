@@ -79,7 +79,8 @@ credit assumptions.
   SSM, Docker image downloads, and OS updates. No NAT Gateway is needed.
 - Administration and dashboard presentation use Session Manager. Use
   port-forwarding from Héctor's laptop after the backend's production port is
-  confirmed. No SSH or public dashboard ingress is configured.
+  confirmed. No SSH or public dashboard ingress rule is configured; Ansible
+  uses an operator key over an SSM-initiated SSH tunnel.
 - VM-to-VM flows must use private addresses and role-scoped Security Groups.
   Until production listeners and ports are approved, no application ingress
   rules are created. Kafka, RabbitMQ, and PostgreSQL are never exposed to
@@ -112,18 +113,22 @@ RabbitMQ 10 GiB. EBS is billed while volumes exist even if EC2 is stopped.
 The data volumes use Terraform `prevent_destroy`; deliberate retention and
 recovery work is required before their removal.
 
-After confirming the attached EBS volume IDs, format a new data volume only
-once, identify it by NVMe serial/volume ID, and mount it by filesystem UUID.
-Suggested mount points are `/srv/smarttraffic/postgres`,
-`/srv/smarttraffic/kafka`, and `/srv/smarttraffic/rabbitmq`; Compose must bind
-each service's own data directory to its corresponding mount. Do not format a
-volume on every boot. Before replacing or terminating `vm-data`, stop the
-containers cleanly and verify a backup. Reattach a retained volume to a
-replacement instance in the same AZ; for recovery in another AZ, restore a
+Ansible identifies attached volumes by their EBS-derived NVMe device paths and
+mounts existing `ext4` or `xfs` filesystems persistently at
+`/srv/smarttraffic/postgres`, `/srv/smarttraffic/kafka`, and
+`/srv/smarttraffic/rabbitmq`; Compose binds each service's own data directory
+to its corresponding mount. The playbook never formats a volume and fails if
+a device is absent or has no supported filesystem. Prepare a verified blank
+volume manually before deployment; never format a volume that may contain
+data. Back up and migrate existing Docker-volume data before setting
+`smarttraffic_data_cutover_confirmed: true`; without that confirmation,
+Ansible refuses to change hosts. Before replacing or terminating `vm-data`,
+stop the containers cleanly and verify a backup. Reattach a retained volume to
+a replacement instance in the same AZ; for recovery in another AZ, restore a
 snapshot into a new volume there. Snapshots and application-consistent
 PostgreSQL backups have separate storage costs, and restore procedures must be
-tested. This PR documents the procedure; it does not install Docker, mount
-disks, or configure Compose/Ansible.
+tested. The EBS mount and guarded cutover changes have not been exercised
+against live AWS infrastructure.
 
 ## Approximate costs
 

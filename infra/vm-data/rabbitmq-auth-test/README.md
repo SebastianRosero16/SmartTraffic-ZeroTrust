@@ -66,7 +66,8 @@ permissions, a missing token, and whether a validly signed token with a
 different `iss` can authenticate. The `iss` result records the behavior of the
 selected broker and does not claim that RabbitMQ validates issuer equality.
 
-The generated Auth Server configuration has separate test-only publisher and
-reader clients. Their random credentials are stored only in generated files
-outside the repository (`application-test.yml` and `test-clients.env`). Do not
-copy them into production or share the generated private keys.
+The generated Auth Server configuration has separate test-only publisher,
+dashboard reader, alert dispatcher, and query client identities. Their random
+credentials are stored only in generated files outside the repository
+(`application-test.yml` and `test-clients.env`). Do not copy them into
+production or share the generated private keys.

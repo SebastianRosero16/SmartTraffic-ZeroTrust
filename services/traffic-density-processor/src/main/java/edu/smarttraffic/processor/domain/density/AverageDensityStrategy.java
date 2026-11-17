@@ -16,6 +16,14 @@ public final class AverageDensityStrategy implements DensityCalculationStrategy 
     }
 
     @Override
+    public double calculateWindow(DensityWindowStatistics statistics) {
+        if (statistics == null) {
+            throw new IllegalArgumentException("Window statistics are required");
+        }
+        return calculate(statistics.totalVehicleCount(), statistics.readingCount());
+    }
+
+    @Override
     public double calculate(List<TrafficReading> readings, Instant evaluatedAt) {
         DensityCalculationSupport.validateInputs(readings, evaluatedAt);
 

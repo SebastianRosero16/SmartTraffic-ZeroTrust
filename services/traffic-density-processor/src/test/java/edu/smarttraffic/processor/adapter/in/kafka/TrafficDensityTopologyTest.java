@@ -9,6 +9,7 @@ import edu.smarttraffic.contracts.TrafficStatus;
 import edu.smarttraffic.contracts.TrafficUpdate;
 import edu.smarttraffic.contracts.ZoneId;
 import edu.smarttraffic.kafkaserdes.JsonSerde;
+import edu.smarttraffic.processor.domain.density.TimeWeightedDensityStrategy;
 import edu.smarttraffic.processor.domain.event.CriticalDensityReachedEvent;
 import edu.smarttraffic.processor.domain.event.TrafficDomainEvent;
 import edu.smarttraffic.processor.domain.event.TrafficStatusChangedEvent;
@@ -61,6 +62,38 @@ class TrafficDensityTopologyTest {
             assertEquals(10, latest.metrics().vehicleCount());
             assertEquals(5.0, latest.metrics().densityValue());
             assertEquals(TrafficStatus.MODERADA, latest.status());
+        }
+    }
+
+    @Test
+    void appliesTheInjectedTimeWeightedStrategyToWindowStatistics() {
+        List<TrafficUpdate> updates = new ArrayList<>();
+        var topology = new TrafficDensityTopology(
+                INPUT_TOPIC,
+                Duration.ofSeconds(60),
+                Duration.ofSeconds(60),
+                new TrafficThresholds(5, 10),
+                updates::add,
+                new TimeWeightedDensityStrategy(Duration.ofSeconds(60)),
+                List.of());
+
+        try (var driver = new TopologyTestDriver(topology.build(), testProperties())) {
+            TestInputTopic<String, TrafficReading> input = driver.createInputTopic(
+                    INPUT_TOPIC,
+                    Serdes.String().serializer(),
+                    new JsonSerde<>(TrafficReading.class).serializer());
+
+            input.pipeInput(
+                    "zone-1",
+                    reading("event-1", "zone-1", 8, BASE_TIME.plusSeconds(30)),
+                    BASE_TIME.plusSeconds(30).toEpochMilli());
+            input.pipeInput(
+                    "zone-1",
+                    reading("event-2", "zone-1", 0, BASE_TIME),
+                    BASE_TIME.toEpochMilli());
+
+            assertEquals(2, updates.size());
+            assertEquals(16.0 / 3.0, updates.get(1).metrics().densityValue(), 1e-9);
         }
     }
 

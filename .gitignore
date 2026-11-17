@@ -46,9 +46,14 @@ infra/vm-data/data/
 **/.env
 **/.env.*
 !**/.env.example
+!**/.env.*.example
 
 # Local deployment secrets
 infra/**/secrets/
+infra/**/data/
+infra/deployment/local-secrets/
+infra/deployment/ansible/inventory/hosts.yml
+infra/deployment/ansible/group_vars/all.yml
 
 # Terraform state, plans, caches, and local variables
 **/.terraform/
@@ -58,6 +63,7 @@ infra/**/secrets/
 tfplan
 *.tfvars
 *.tfvars.json
+*.tfvars.save*
 crash.log
 override.tf
 override.tf.json

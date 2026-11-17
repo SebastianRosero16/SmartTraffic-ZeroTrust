@@ -1,0 +1,175 @@
+name: smarttraffic-vm-data
+
+services:
+  kafka:
+    image: smarttraffic/kafka-oauth:4.4.0-oauth-0.18.1
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      CLUSTER_ID: "${KAFKA_CLUSTER_ID:?Set KAFKA_CLUSTER_ID}"
+      CLIENT_PORT: "9092"
+      CONTROLLER_PORT: "9093"
+      OAUTH_JWKS_ENDPOINT: "${AUTH_JWKS_URI:?Set HTTPS Auth JWKS URI}"
+      OAUTH_ISSUER_URI: "${AUTH_ISSUER_URI:?Set AUTH_ISSUER_URI}"
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_HEAP_OPTS: "${KAFKA_HEAP_OPTS:--Xms512m -Xmx1536m}"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
+      KAFKA_LISTENERS: "CLIENT://0.0.0.0:9092,CONTROLLER://127.0.0.1:9093"
+      KAFKA_ADVERTISED_LISTENERS: "CLIENT://${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_SSL,CONTROLLER:SSL"
+      KAFKA_LISTENER_NAME_CONTROLLER_SSL_CLIENT_AUTH: "required"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "CLIENT"
+      KAFKA_CONNECTIONS_MAX_REAUTH_MS: "240000"
+      KAFKA_SASL_ENABLED_MECHANISMS: "OAUTHBEARER"
+      KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required
+        oauth.jwks.endpoint.uri="${AUTH_JWKS_URI}"
+        oauth.valid.issuer.uri="${AUTH_ISSUER_URI}"
+        oauth.check.audience="true"
+        oauth.client.id="${KAFKA_OAUTH_AUDIENCE}"
+        oauth.client.secret="${KAFKA_BROKER_CLIENT_SECRET}"
+        oauth.scope="${KAFKA_BROKER_OAUTH_SCOPE}"
+        oauth.token.endpoint.uri="${AUTH_TOKEN_ENDPOINT_URI}"
+        oauth.ssl.truststore.location="/etc/kafka/secrets/auth-truststore.p12"
+        oauth.ssl.truststore.password="${AUTH_TLS_TRUSTSTORE_PASSWORD}"
+        oauth.ssl.truststore.type="PKCS12";
+      KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_SERVER_CALLBACK_HANDLER_CLASS: "io.strimzi.kafka.oauth.server.JaasServerOauthValidatorCallbackHandler"
+      KAFKA_PRINCIPAL_BUILDER_CLASS: "io.strimzi.kafka.oauth.server.OAuthKafkaPrincipalBuilder"
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: "OAUTHBEARER"
+      KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_LOGIN_CALLBACK_HANDLER_CLASS: "io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/tmp/kafka-client-jaas.conf"
+      KAFKA_AUTHORIZER_CLASS_NAME: "org.apache.kafka.metadata.authorizer.StandardAuthorizer"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+      KAFKA_SUPER_USERS: "${KAFKA_SUPER_USERS:?Set KAFKA_SUPER_USERS to reviewed broker principals}"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "1"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_SSL_CLIENT_AUTH: "${KAFKA_TLS_CLIENT_AUTH:-none}"
+      KAFKA_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/broker.keystore.p12
+      KAFKA_SSL_KEYSTORE_PASSWORD: "${KAFKA_TLS_KEYSTORE_PASSWORD:?Set KAFKA_TLS_KEYSTORE_PASSWORD}"
+      KAFKA_SSL_KEY_PASSWORD: "${KAFKA_TLS_KEY_PASSWORD:?Set KAFKA_TLS_KEY_PASSWORD}"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/broker.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: "${KAFKA_TLS_TRUSTSTORE_PASSWORD:?Set KAFKA_TLS_TRUSTSTORE_PASSWORD}"
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+    volumes:
+      - type: bind
+        source: /srv/smarttraffic/kafka
+        target: /var/lib/kafka/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${KAFKA_TLS_DIR:?Set KAFKA_TLS_DIR to a protected host directory}"
+        target: /etc/kafka/secrets
+        read_only: true
+      - type: bind
+        source: "${KAFKA_CLIENT_JAAS_FILE:?Set KAFKA_CLIENT_JAAS_FILE to a protected host file}"
+        target: /tmp/kafka-client-jaas.conf
+        read_only: true
+    cap_drop:
+      - ALL
+    group_add:
+      - "10001"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "${KAFKA_CPUS:?Set KAFKA_CPUS after sizing}"
+          memory: "${KAFKA_MEMORY:?Set KAFKA_MEMORY after sizing}"
+
+  rabbitmq:
+    image: rabbitmq:4.3.7
+    hostname: rabbitmq
+    restart: unless-stopped
+    user: "999:10001"
+    network_mode: host
+    environment:
+      RABBITMQ_RESOURCE_SERVER_ID: "${RABBITMQ_RESOURCE_SERVER_ID:-smarttraffic-rabbitmq}"
+      RABBITMQ_OAUTH_JWKS_URI: "${AUTH_JWKS_URI:?Set HTTPS Auth JWKS URI}"
+    volumes:
+      - type: bind
+        source: ./rabbitmq-production.conf
+        target: /etc/rabbitmq/rabbitmq.conf
+        read_only: true
+      - type: bind
+        source: ./rabbitmq/enabled_plugins
+        target: /etc/rabbitmq/enabled_plugins
+        read_only: true
+      - type: bind
+        source: ./rabbitmq/production-definitions.json
+        target: /etc/rabbitmq/definitions.json
+        read_only: true
+      - type: bind
+        source: "${RABBITMQ_TLS_DIR:?Set RABBITMQ_TLS_DIR to a protected host directory}"
+        target: /etc/rabbitmq/certs
+        read_only: true
+      - type: bind
+        source: /srv/smarttraffic/rabbitmq
+        target: /var/lib/rabbitmq
+        bind:
+          create_host_path: false
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "${RABBITMQ_CPUS:?Set RABBITMQ_CPUS after sizing}"
+          memory: "${RABBITMQ_MEMORY:?Set RABBITMQ_MEMORY after sizing}"
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-smarttraffic}"
+      POSTGRES_USER: "${POSTGRES_ADMIN_USER:?Set POSTGRES_ADMIN_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD}"
+      APP_DB_USER: "${POSTGRES_APP_USER:?Set POSTGRES_APP_USER}"
+      APP_DB_PASSWORD: "${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD}"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - type: bind
+        source: /srv/smarttraffic/postgres
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./postgres-init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "${POSTGRES_CPUS:?Set POSTGRES_CPUS after sizing}"
+          memory: "${POSTGRES_MEMORY:?Set POSTGRES_MEMORY after sizing}"

@@ -1,0 +1,72 @@
+smarttraffic_checkout: "{{ lookup('env', 'SMARTTRAFFIC_CHECKOUT') }}"
+smarttraffic_secrets_source: "{{ lookup('env', 'SMARTTRAFFIC_SECRETS_DIR') }}"
+smarttraffic_vpc_cidr: REPLACE_WITH_VPC_CIDR
+smarttraffic_vpc_dns_ipv4: REPLACE_WITH_VPC_DNS_RESOLVER_IP
+smarttraffic_temporary_https_egress: true
+
+smarttraffic_vm_ips:
+  vm-auth: REPLACE_WITH_VM_AUTH_PRIVATE_IP
+  vm-data: REPLACE_WITH_VM_DATA_PRIVATE_IP
+  vm-ingest: REPLACE_WITH_VM_INGEST_PRIVATE_IP
+  vm-core: REPLACE_WITH_VM_CORE_PRIVATE_IP
+  vm-app: REPLACE_WITH_VM_APP_PRIVATE_IP
+
+smarttraffic_data_cutover_confirmed: false
+smarttraffic_data_volumes:
+  postgres:
+    volume_id: REPLACE_WITH_POSTGRES_EBS_VOLUME_ID
+    mountpoint: /srv/smarttraffic/postgres
+    group: root
+    mode: "0750"
+  kafka:
+    volume_id: REPLACE_WITH_KAFKA_EBS_VOLUME_ID
+    mountpoint: /srv/smarttraffic/kafka
+    group: "10001"
+    mode: "0770"
+  rabbitmq:
+    volume_id: REPLACE_WITH_RABBITMQ_EBS_VOLUME_ID
+    mountpoint: /srv/smarttraffic/rabbitmq
+    group: "10001"
+    mode: "0770"
+
+smarttraffic_compose_files:
+  vm-auth: infra/vm-auth/compose.yaml
+  vm-data: infra/vm-data/compose.aws.yaml
+  vm-ingest: infra/vm-ingest/compose.yaml
+  vm-core: infra/vm-core/compose.yaml
+  vm-app: infra/vm-app/compose.yaml
+
+smarttraffic_env_files:
+  vm-auth: vm-auth.env
+  vm-data: vm-data.env
+  vm-ingest: vm-ingest.env
+  vm-core: vm-core.env
+  vm-app: vm-app.env
+
+smarttraffic_java_images:
+  vm-auth:
+    - image: smarttraffic/auth-server:local
+      module: services/auth-server
+      main_class: edu.smarttraffic.auth.AuthServerApplication
+  vm-data: []
+  vm-ingest:
+    - image: smarttraffic/traffic-sensor-simulator:local
+      module: services/traffic-sensor-simulator
+      main_class: edu.smarttraffic.simulator.TrafficSensorSimulatorApplication
+  vm-core:
+    - image: smarttraffic/traffic-density-processor:local
+      module: services/traffic-density-processor
+      main_class: edu.smarttraffic.processor.TrafficDensityProcessorApplication
+    - image: smarttraffic/traffic-archiver:local
+      module: services/traffic-archiver
+      main_class: edu.smarttraffic.archiver.TrafficArchiverApplication
+  vm-app:
+    - image: smarttraffic/user-dashboard-backend:local
+      module: services/user-dashboard-backend
+      main_class: edu.smarttraffic.dashboard.UserDashboardBackendApplication
+    - image: smarttraffic/alert-dispatcher:local
+      module: services/alert-dispatcher
+      main_class: edu.smarttraffic.alerts.AlertDispatcherApplication
+    - image: smarttraffic/query-client:local
+      module: services/query-client
+      main_class: edu.smarttraffic.queryclient.QueryClientApplication

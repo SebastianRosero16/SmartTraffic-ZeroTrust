@@ -19,6 +19,8 @@
         <module>services/traffic-archiver</module>
         <module>services/traffic-sensor-simulator</module>
         <module>services/user-dashboard-backend</module>
+        <module>services/alert-dispatcher</module>
+        <module>services/query-client</module>
     </modules>
 
     <properties>

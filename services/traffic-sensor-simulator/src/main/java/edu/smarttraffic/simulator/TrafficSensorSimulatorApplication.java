@@ -3,8 +3,8 @@ package edu.smarttraffic.simulator;
 import edu.smarttraffic.contracts.TrafficReading;
 import java.time.Clock;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.ExecutionException;
-import java.util.random.RandomGenerator;
 import org.apache.kafka.clients.producer.RecordMetadata;
 
 public final class TrafficSensorSimulatorApplication {
@@ -21,7 +21,7 @@ public final class TrafficSensorSimulatorApplication {
                 properties.minimumVehicles(),
                 properties.maximumVehicles(),
                 Clock.systemUTC(),
-                RandomGenerator.getDefault());
+                new Random());
 
         try (KafkaTrafficReadingPublisher publisher =
                 KafkaTrafficReadingPublisher.connect(properties.topic(), environment)) {

@@ -112,6 +112,8 @@ $jwtPrivatePathForYaml = $jwtPrivatePath.Replace('\', '/')
 $jwtPublicPathForYaml = $jwtPublicPath.Replace('\', '/')
 $publisherSecret = [Guid]::NewGuid().ToString('N')
 $readerSecret = [Guid]::NewGuid().ToString('N')
+$alertSecret = [Guid]::NewGuid().ToString('N')
+$querySecret = [Guid]::NewGuid().ToString('N')
 $authProperties = @"
 server:
   address: 0.0.0.0
@@ -145,11 +147,28 @@ smarttraffic:
           - smarttraffic-rabbitmq-it.read:smarttraffic-it/dashboard-updates-it
         audiences:
           - smarttraffic-rabbitmq-it
+      rabbit-alert-it:
+        secret: "$alertSecret"
+        scopes:
+          - smarttraffic-rabbitmq-it.read:smarttraffic-it/alert-updates-it
+          - smarttraffic-rabbitmq-it.read:smarttraffic-it/query-requests-it
+          - smarttraffic-rabbitmq-it.write:smarttraffic-it/query-answers-it/client-it
+        audiences:
+          - smarttraffic-rabbitmq-it
+      rabbit-query-client-it:
+        secret: "$querySecret"
+        scopes:
+          - smarttraffic-rabbitmq-it.write:smarttraffic-it/query-requests-it
+          - smarttraffic-rabbitmq-it.read:smarttraffic-it/query-replies-it
+        audiences:
+          - smarttraffic-rabbitmq-it
 "@
 Set-Content -LiteralPath $authPropertiesPath -Encoding utf8 -Value $authProperties
 Set-Content -LiteralPath $testClientsPath -Encoding ascii -Value @(
     "RABBITMQ_IT_PUBLISHER_SECRET=$publisherSecret"
     "RABBITMQ_IT_READER_SECRET=$readerSecret"
+    "RABBITMQ_IT_ALERT_SECRET=$alertSecret"
+    "RABBITMQ_IT_QUERY_SECRET=$querySecret"
 )
 Remove-Item -LiteralPath $caKeyPath
 
