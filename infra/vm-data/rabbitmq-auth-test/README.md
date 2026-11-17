@@ -25,6 +25,11 @@ $authConfig = (Join-Path $testAssets 'application-test.yml').Replace('\', '/')
 mvn -pl services/auth-server spring-boot:run "-Dspring-boot.run.arguments=--spring.config.additional-location=file:$authConfig"
 ```
 
+Keep this process running until the broker and test container have been
+stopped. A connection-refused error (for example, curl exit code 7) means the
+Auth Server is not listening or is unreachable; it is not a reason to disable
+TLS certificate or hostname verification.
+
 Use the actual output path printed by the script. In a second PowerShell
 window, provide the same output directory to the RabbitMQ Compose fixture:
 
@@ -42,6 +47,26 @@ the root Maven reactor. Running `mvn test` here without
 
 With the Auth Server and broker running, run the suite in a disposable Maven
 container attached to the Compose network. From the repository root:
+
+First verify the JWKS endpoint from the broker container itself. This checks
+the CA chain and hostname and confirms an HTTP 200 response without printing
+the JWKS body:
+
+```powershell
+$broker = docker compose --file infra\vm-data\rabbitmq\compose.yaml ps -q rabbitmq
+$request = "GET /oauth2/jwks HTTP/1.1`r`nHost: host.docker.internal`r`nConnection: close`r`n`r`n"
+$response = $request | docker exec -i $broker /opt/openssl/bin/openssl s_client `
+  -quiet -connect host.docker.internal:8443 `
+  -servername host.docker.internal `
+  -CAfile /etc/rabbitmq/certs/oauth-ca.pem `
+  -verify_return_error -verify_hostname host.docker.internal 2>$null
+$probeExit = $LASTEXITCODE
+if ($probeExit -ne 0 -or $response -notmatch 'HTTP/1.1 200') {
+  throw 'JWKS probe failed; preserve TLS verification and check service/network reachability.'
+}
+```
+
+Only continue when that check succeeds:
 
 ```powershell
 $testAssets = Join-Path $env:TEMP 'smarttraffic-rabbitmq-it'
