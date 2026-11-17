@@ -7,10 +7,11 @@ locals {
     "vm-app",
   ])
 
-  temporary_nat_enabled = (
-    var.enable_resource_creation &&
-    var.enable_temporary_nat_egress
-  )
+  data_volume_device_names = {
+    postgres = "/dev/sdf"
+    kafka    = "/dev/sdg"
+    rabbitmq = "/dev/sdh"
+  }
 
   rfc1918_ipv4_cidrs = [
     "10.0.0.0/8",
@@ -21,7 +22,6 @@ locals {
   ipv4_cidrs_for_checks = distinct(concat(
     compact([var.vpc_cidr]),
     values(var.subnet_cidrs),
-    var.enable_temporary_nat_egress ? [var.nat_subnet_cidr] : [],
     [for rule in var.network_rules : rule.peer_ipv4_cidr if rule.peer_ipv4_cidr != null],
     tolist(var.approved_private_peer_ipv4_cidrs),
     local.rfc1918_ipv4_cidrs,
@@ -57,11 +57,42 @@ locals {
     }
   }
 
-  configured_ipv4_networks = compact(concat(
-    [var.vpc_cidr],
-    values(var.subnet_cidrs),
-    var.enable_temporary_nat_egress ? [var.nat_subnet_cidr] : [],
-  ))
+  vpc_ipv4_range = lookup(local.ipv4_cidr_ranges, var.vpc_cidr, {
+    start = -1
+    end   = -1
+  })
+
+  vpc_cidr_is_private = anytrue([
+    for cidr in local.rfc1918_ipv4_cidrs :
+    local.vpc_ipv4_range.start >= local.ipv4_cidr_ranges[cidr].start &&
+    local.vpc_ipv4_range.end <= local.ipv4_cidr_ranges[cidr].end
+  ])
+
+  subnet_ipv4_ranges = [
+    for role, cidr in var.subnet_cidrs : {
+      role  = role
+      start = local.ipv4_cidr_ranges[cidr].start
+      end   = local.ipv4_cidr_ranges[cidr].end
+    }
+  ]
+
+  subnet_cidrs_within_vpc = {
+    for subnet in local.subnet_ipv4_ranges : subnet.role => (
+      subnet.start >= local.vpc_ipv4_range.start &&
+      subnet.end <= local.vpc_ipv4_range.end
+    )
+  }
+
+  subnet_cidr_ranges_do_not_overlap = flatten([
+    for left_index, left in local.subnet_ipv4_ranges : [
+      for right_index, right in local.subnet_ipv4_ranges :
+      left_index >= right_index ||
+      left.end < right.start ||
+      right.end < left.start
+    ]
+  ])
+
+  configured_ipv4_networks = compact(concat([var.vpc_cidr], values(var.subnet_cidrs)))
 
   rule_peer_is_private = {
     for index, rule in var.network_rules : tostring(index) => rule.peer_ipv4_cidr != null ? anytrue([
@@ -107,23 +138,13 @@ resource "terraform_data" "deployment_guard" {
     }
 
     precondition {
-      condition     = var.enable_temporary_nat_egress
-      error_message = "Private instances need the approved temporary NAT path for SSM and software downloads; enable it only after reviewing its hourly and data-transfer cost."
-    }
-
-    precondition {
-      condition     = can(cidrnetmask(var.nat_subnet_cidr))
-      error_message = "Set a valid public subnet CIDR for the temporary NAT gateway."
-    }
-
-    precondition {
-      condition     = trimspace(var.operator_ssh_public_key) != ""
-      error_message = "Provide an operator public SSH key for Ansible over SSM; never put the private key in Terraform or Git."
-    }
-
-    precondition {
       condition     = can(cidrnetmask(var.vpc_cidr))
       error_message = "Set an approved private IPv4 VPC CIDR before enabling resource creation."
+    }
+
+    precondition {
+      condition     = local.vpc_cidr_is_private
+      error_message = "The VPC CIDR must be contained in an RFC1918 private IPv4 range."
     }
 
     precondition {
@@ -137,6 +158,16 @@ resource "terraform_data" "deployment_guard" {
         length(setsubtract(toset(keys(var.subnet_cidrs)), local.vm_roles)) == 0
       )
       error_message = "Provide exactly one approved subnet CIDR for each of the five logical VMs."
+    }
+
+    precondition {
+      condition     = alltrue(values(local.subnet_cidrs_within_vpc))
+      error_message = "Every subnet CIDR must be wholly contained within the approved VPC CIDR."
+    }
+
+    precondition {
+      condition     = alltrue(local.subnet_cidr_ranges_do_not_overlap)
+      error_message = "Subnet CIDR ranges must not overlap."
     }
 
     precondition {
@@ -154,6 +185,14 @@ resource "terraform_data" "deployment_guard" {
         length(setsubtract(toset(keys(var.root_volume_sizes_gib)), local.vm_roles)) == 0
       )
       error_message = "Provide a reviewed root-volume size for each of the five logical VMs."
+    }
+
+    precondition {
+      condition = (
+        length(setsubtract(toset(["postgres", "kafka", "rabbitmq"]), toset(keys(var.data_volume_sizes_gib)))) == 0 &&
+        length(setsubtract(toset(keys(var.data_volume_sizes_gib)), toset(["postgres", "kafka", "rabbitmq"]))) == 0
+      )
+      error_message = "Provide separate data-volume sizes for PostgreSQL, Kafka, and RabbitMQ."
     }
 
     precondition {
@@ -216,17 +255,18 @@ resource "aws_subnet" "vm" {
   vpc_id                  = aws_vpc.smarttraffic[0].id
   cidr_block              = each.value
   availability_zone       = var.availability_zone
-  map_public_ip_on_launch = false
+  map_public_ip_on_launch = true
 
   tags = {
     Name      = "smarttraffic-${each.key}"
+    Tier      = "public"
     Project   = "SmartTraffic"
     ManagedBy = "Terraform"
   }
 }
 
-resource "aws_internet_gateway" "public" {
-  count = local.temporary_nat_enabled ? 1 : 0
+resource "aws_internet_gateway" "smarttraffic" {
+  count = var.enable_resource_creation ? 1 : 0
 
   vpc_id = aws_vpc.smarttraffic[0].id
 
@@ -237,23 +277,8 @@ resource "aws_internet_gateway" "public" {
   }
 }
 
-resource "aws_subnet" "nat" {
-  count = local.temporary_nat_enabled ? 1 : 0
-
-  vpc_id                  = aws_vpc.smarttraffic[0].id
-  cidr_block              = var.nat_subnet_cidr
-  availability_zone       = var.availability_zone
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name      = "smarttraffic-nat"
-    Project   = "SmartTraffic"
-    ManagedBy = "Terraform"
-  }
-}
-
 resource "aws_route_table" "public" {
-  count = local.temporary_nat_enabled ? 1 : 0
+  count = var.enable_resource_creation ? 1 : 0
 
   vpc_id = aws_vpc.smarttraffic[0].id
 
@@ -264,76 +289,19 @@ resource "aws_route_table" "public" {
   }
 }
 
-resource "aws_route" "public_internet" {
-  count = local.temporary_nat_enabled ? 1 : 0
+resource "aws_route" "internet" {
+  count = var.enable_resource_creation ? 1 : 0
 
   route_table_id         = aws_route_table.public[0].id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.public[0].id
+  gateway_id             = aws_internet_gateway.smarttraffic[0].id
 }
 
-resource "aws_route_table_association" "nat" {
-  count = local.temporary_nat_enabled ? 1 : 0
-
-  subnet_id      = aws_subnet.nat[0].id
-  route_table_id = aws_route_table.public[0].id
-}
-
-resource "aws_eip" "nat" {
-  count = local.temporary_nat_enabled ? 1 : 0
-
-  domain = "vpc"
-
-  tags = {
-    Name      = "smarttraffic-nat"
-    Project   = "SmartTraffic"
-    ManagedBy = "Terraform"
-  }
-}
-
-resource "aws_nat_gateway" "private_egress" {
-  count = local.temporary_nat_enabled ? 1 : 0
-
-  allocation_id = aws_eip.nat[0].id
-  subnet_id     = aws_subnet.nat[0].id
-
-  depends_on = [
-    aws_route.public_internet,
-    aws_route_table_association.nat,
-  ]
-
-  tags = {
-    Name      = "smarttraffic-nat"
-    Project   = "SmartTraffic"
-    ManagedBy = "Terraform"
-  }
-}
-
-resource "aws_route_table" "private" {
-  count = var.enable_resource_creation ? 1 : 0
-
-  vpc_id = aws_vpc.smarttraffic[0].id
-
-  tags = {
-    Name      = "smarttraffic-private"
-    Project   = "SmartTraffic"
-    ManagedBy = "Terraform"
-  }
-}
-
-resource "aws_route" "private_nat" {
-  count = local.temporary_nat_enabled ? 1 : 0
-
-  route_table_id         = aws_route_table.private[0].id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.private_egress[0].id
-}
-
-resource "aws_route_table_association" "private" {
+resource "aws_route_table_association" "vm" {
   for_each = var.enable_resource_creation ? var.subnet_cidrs : {}
 
   subnet_id      = aws_subnet.vm[each.key].id
-  route_table_id = aws_route_table.private[0].id
+  route_table_id = aws_route_table.public[0].id
 }
 
 resource "aws_security_group" "vm" {
@@ -348,6 +316,17 @@ resource "aws_security_group" "vm" {
     Project   = "SmartTraffic"
     ManagedBy = "Terraform"
   }
+}
+
+resource "aws_vpc_security_group_egress_rule" "https" {
+  for_each = var.enable_resource_creation ? { for role in local.vm_roles : role => role } : {}
+
+  security_group_id = aws_security_group.vm[each.key].id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  description       = "HTTPS egress for SSM, image downloads, and operating system updates."
 }
 
 resource "aws_vpc_security_group_ingress_rule" "approved" {
@@ -367,64 +346,6 @@ resource "aws_vpc_security_group_ingress_rule" "approved" {
   description = each.value.description
 }
 
-resource "aws_vpc_security_group_egress_rule" "approved" {
-  for_each = {
-    for index, rule in var.network_rules : tostring(index) => rule
-    if var.enable_resource_creation && rule.direction == "egress"
-  }
-
-  security_group_id = aws_security_group.vm[each.value.target_role].id
-  ip_protocol       = each.value.protocol
-  from_port         = each.value.protocol == "-1" ? null : each.value.from_port
-  to_port           = each.value.protocol == "-1" ? null : each.value.to_port
-  cidr_ipv4         = each.value.peer_ipv4_cidr
-  referenced_security_group_id = (
-    each.value.peer_role == null ? null : aws_security_group.vm[each.value.peer_role].id
-  )
-  description = each.value.description
-}
-
-resource "aws_vpc_security_group_egress_rule" "temporary_https" {
-  for_each = local.temporary_nat_enabled ? { for role in local.vm_roles : role => role } : {}
-
-  security_group_id = aws_security_group.vm[each.key].id
-  ip_protocol       = "tcp"
-  from_port         = 443
-  to_port           = 443
-  cidr_ipv4         = "0.0.0.0/0"
-  description       = "Temporary HTTPS egress through NAT for SSM and provisioning"
-}
-
-resource "aws_vpc_security_group_egress_rule" "vpc_dns" {
-  for_each = var.enable_resource_creation && can(cidrnetmask(var.vpc_cidr)) ? {
-    for pair in setproduct(local.vm_roles, toset(["tcp", "udp"])) :
-    "${pair[0]}-${pair[1]}" => {
-      role     = pair[0]
-      protocol = pair[1]
-    }
-  } : {}
-
-  security_group_id = aws_security_group.vm[each.value.role].id
-  ip_protocol       = each.value.protocol
-  from_port         = 53
-  to_port           = 53
-  cidr_ipv4         = "${cidrhost(var.vpc_cidr, 2)}/32"
-  description       = "DNS to the VPC resolver"
-}
-
-resource "aws_key_pair" "operator" {
-  count = var.enable_resource_creation ? 1 : 0
-
-  key_name   = "smarttraffic-operator"
-  public_key = var.operator_ssh_public_key
-
-  tags = {
-    Name      = "smarttraffic-operator"
-    Project   = "SmartTraffic"
-    ManagedBy = "Terraform"
-  }
-}
-
 resource "aws_iam_role" "ssm" {
   count = var.enable_resource_creation ? 1 : 0
 
@@ -433,10 +354,10 @@ resource "aws_iam_role" "ssm" {
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
+      Action = "sts:AssumeRole"
       Principal = {
         Service = "ec2.amazonaws.com"
       }
-      Action = "sts:AssumeRole"
     }]
   })
 
@@ -447,7 +368,7 @@ resource "aws_iam_role" "ssm" {
   }
 }
 
-resource "aws_iam_role_policy_attachment" "ssm" {
+resource "aws_iam_role_policy_attachment" "ssm_core" {
   count = var.enable_resource_creation ? 1 : 0
 
   role       = aws_iam_role.ssm[0].name
@@ -467,6 +388,23 @@ resource "aws_iam_instance_profile" "ssm" {
   }
 }
 
+resource "aws_vpc_security_group_egress_rule" "approved" {
+  for_each = {
+    for index, rule in var.network_rules : tostring(index) => rule
+    if var.enable_resource_creation && rule.direction == "egress"
+  }
+
+  security_group_id = aws_security_group.vm[each.value.target_role].id
+  ip_protocol       = each.value.protocol
+  from_port         = each.value.protocol == "-1" ? null : each.value.from_port
+  to_port           = each.value.protocol == "-1" ? null : each.value.to_port
+  cidr_ipv4         = each.value.peer_ipv4_cidr
+  referenced_security_group_id = (
+    each.value.peer_role == null ? null : aws_security_group.vm[each.value.peer_role].id
+  )
+  description = each.value.description
+}
+
 resource "aws_instance" "vm" {
   for_each = var.enable_resource_creation ? { for role in local.vm_roles : role => role } : {}
 
@@ -474,9 +412,8 @@ resource "aws_instance" "vm" {
   instance_type               = var.instance_types[each.key]
   subnet_id                   = aws_subnet.vm[each.key].id
   vpc_security_group_ids      = [aws_security_group.vm[each.key].id]
-  associate_public_ip_address = false
+  associate_public_ip_address = true
   iam_instance_profile        = aws_iam_instance_profile.ssm[0].name
-  key_name                    = aws_key_pair.operator[0].key_name
 
   root_block_device {
     volume_type           = "gp3"
@@ -498,11 +435,34 @@ resource "aws_instance" "vm" {
 
   depends_on = [
     terraform_data.deployment_guard,
-    aws_iam_role_policy_attachment.ssm,
+    aws_vpc_security_group_egress_rule.https,
     aws_vpc_security_group_egress_rule.approved,
-    aws_vpc_security_group_egress_rule.temporary_https,
-    aws_vpc_security_group_egress_rule.vpc_dns,
-    aws_route.private_nat,
-    aws_route_table_association.private,
   ]
+}
+
+resource "aws_ebs_volume" "data" {
+  for_each = var.enable_resource_creation ? var.data_volume_sizes_gib : {}
+
+  availability_zone = var.availability_zone
+  size              = each.value
+  type              = "gp3"
+  encrypted         = true
+
+  tags = {
+    Name      = "smarttraffic-data-${each.key}"
+    Project   = "SmartTraffic"
+    ManagedBy = "Terraform"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_volume_attachment" "data" {
+  for_each = var.enable_resource_creation ? var.data_volume_sizes_gib : {}
+
+  device_name = local.data_volume_device_names[each.key]
+  volume_id   = aws_ebs_volume.data[each.key].id
+  instance_id = aws_instance.vm["vm-data"].id
 }
