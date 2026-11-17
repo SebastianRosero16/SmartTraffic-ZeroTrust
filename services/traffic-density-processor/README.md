@@ -3,8 +3,10 @@
 `TrafficDensityTopology` consumes JSON `TrafficReading` records from Kafka,
 re-keys them by zone, aggregates them in event-time tumbling windows, and
 publishes each updated `TrafficUpdate` through the
-`TrafficUpdatePublisher` output port. The update contains the total vehicle
-count and simple average per reading for that zone and window.
+`TrafficUpdatePublisher` output port. A constructor-injected density strategy
+calculates the window value: the default is the simple average, and
+`time-weighted` gives more weight to more recent readings. The Kafka window
+state stores sufficient statistics rather than retaining every reading.
 Late results for an older window do not replace a zone status already advanced
 by a newer window; corrections to the latest window remain eligible.
 
@@ -34,6 +36,7 @@ In addition to the Kafka OAuth client environment listed in the
 | `KAFKA_TRAFFIC_READINGS_TOPIC` | Source topic; selected name is `traffic_readings`. |
 | `TRAFFIC_WINDOW_SECONDS` | Positive event-time tumbling window size. |
 | `TRAFFIC_WINDOW_GRACE_SECONDS` | Non-negative allowed lateness for the window. |
+| `TRAFFIC_DENSITY_STRATEGY` | `average` (default) or `time-weighted`. |
 | `TRAFFIC_MODERATE_THRESHOLD` | Density at which the state becomes `MODERADA`. |
 | `TRAFFIC_CONGESTED_THRESHOLD` | Density at which the state becomes `CONGESTIONADA`; must exceed the moderate threshold. |
 

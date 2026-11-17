@@ -1,12 +1,37 @@
 package edu.smarttraffic.processor.adapter.in.kafka;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
+import edu.smarttraffic.processor.domain.density.AverageDensityStrategy;
+import edu.smarttraffic.processor.domain.density.TimeWeightedDensityStrategy;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class KafkaStreamsTrafficDensityProcessorTest {
+    @Test
+    void selectsTheConfiguredDensityStrategyAndDefaultsToAverage() {
+        assertInstanceOf(
+                AverageDensityStrategy.class,
+                KafkaStreamsTrafficDensityProcessor.densityStrategyFromEnvironment(
+                        Map.of(), Duration.ofSeconds(60)));
+        assertInstanceOf(
+                TimeWeightedDensityStrategy.class,
+                KafkaStreamsTrafficDensityProcessor.densityStrategyFromEnvironment(
+                        Map.of("TRAFFIC_DENSITY_STRATEGY", "time-weighted"),
+                        Duration.ofSeconds(60)));
+    }
+
+    @Test
+    void rejectsUnsupportedDensityStrategies() {
+        assertThrows(IllegalArgumentException.class,
+                () -> KafkaStreamsTrafficDensityProcessor.densityStrategyFromEnvironment(
+                        Map.of("TRAFFIC_DENSITY_STRATEGY", "unknown"),
+                        Duration.ofSeconds(60)));
+    }
+
     @Test
     void rejectsMissingWindowAndThresholdConfiguration() {
         Map<String, String> environment = new HashMap<>(kafkaEnvironment());

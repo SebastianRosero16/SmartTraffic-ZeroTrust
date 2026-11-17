@@ -1,0 +1,177 @@
+aws_region                       = ""
+enable_resource_creation         = false
+cost_review_confirmed            = false
+enable_temporary_nat_egress      = false
+availability_zone                = ""
+nat_subnet_cidr                  = ""
+operator_ssh_public_key           = ""
+vpc_cidr                         = ""
+subnet_cidrs                     = {}
+instance_types                   = {}
+root_volume_sizes_gib            = {}
+network_rules = [
+  {
+    direction   = "ingress"
+    target_role = "vm-data"
+    protocol    = "tcp"
+    from_port   = 9092
+    to_port     = 9092
+    peer_role   = "vm-ingest"
+    description = "Traffic sensor to Kafka"
+  },
+  {
+    direction   = "ingress"
+    target_role = "vm-data"
+    protocol    = "tcp"
+    from_port   = 9092
+    to_port     = 9092
+    peer_role   = "vm-core"
+    description = "Traffic processor and archiver to Kafka"
+  },
+  {
+    direction   = "ingress"
+    target_role = "vm-data"
+    protocol    = "tcp"
+    from_port   = 5672
+    to_port     = 5672
+    peer_role   = "vm-core"
+    description = "Traffic processor to RabbitMQ"
+  },
+  {
+    direction   = "ingress"
+    target_role = "vm-data"
+    protocol    = "tcp"
+    from_port   = 5672
+    to_port     = 5672
+    peer_role   = "vm-app"
+    description = "Application services to RabbitMQ"
+  },
+  {
+    direction   = "ingress"
+    target_role = "vm-data"
+    protocol    = "tcp"
+    from_port   = 5432
+    to_port     = 5432
+    peer_role   = "vm-core"
+    description = "Traffic archiver to PostgreSQL"
+  },
+  {
+    direction   = "egress"
+    target_role = "vm-ingest"
+    protocol    = "tcp"
+    from_port   = 9092
+    to_port     = 9092
+    peer_role   = "vm-data"
+    description = "Traffic sensor to Kafka"
+  },
+  {
+    direction   = "egress"
+    target_role = "vm-core"
+    protocol    = "tcp"
+    from_port   = 9092
+    to_port     = 9092
+    peer_role   = "vm-data"
+    description = "Traffic processor and archiver to Kafka"
+  },
+  {
+    direction   = "egress"
+    target_role = "vm-core"
+    protocol    = "tcp"
+    from_port   = 5672
+    to_port     = 5672
+    peer_role   = "vm-data"
+    description = "Traffic processor to RabbitMQ"
+  },
+  {
+    direction   = "egress"
+    target_role = "vm-app"
+    protocol    = "tcp"
+    from_port   = 5672
+    to_port     = 5672
+    peer_role   = "vm-data"
+    description = "Application services to RabbitMQ"
+  },
+  {
+    direction   = "egress"
+    target_role = "vm-core"
+    protocol    = "tcp"
+    from_port   = 5432
+    to_port     = 5432
+    peer_role   = "vm-data"
+    description = "Traffic archiver to PostgreSQL"
+  },
+  {
+    direction   = "ingress"
+    target_role = "vm-auth"
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
+    peer_role   = "vm-ingest"
+    description = "Traffic sensor to Auth Server"
+  },
+  {
+    direction   = "ingress"
+    target_role = "vm-auth"
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
+    peer_role   = "vm-core"
+    description = "Traffic processor and archiver to Auth Server"
+  },
+  {
+    direction   = "ingress"
+    target_role = "vm-auth"
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
+    peer_role   = "vm-app"
+    description = "Application services to Auth Server"
+  },
+  {
+    direction   = "ingress"
+    target_role = "vm-auth"
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
+    peer_role   = "vm-data"
+    description = "Kafka and RabbitMQ brokers to Auth JWKS"
+  },
+  {
+    direction   = "egress"
+    target_role = "vm-ingest"
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
+    peer_role   = "vm-auth"
+    description = "Traffic sensor to Auth Server"
+  },
+  {
+    direction   = "egress"
+    target_role = "vm-core"
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
+    peer_role   = "vm-auth"
+    description = "Traffic processor and archiver to Auth Server"
+  },
+  {
+    direction   = "egress"
+    target_role = "vm-app"
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
+    peer_role   = "vm-auth"
+    description = "Application services to Auth Server"
+  },
+  {
+    direction   = "egress"
+    target_role = "vm-data"
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
+    peer_role   = "vm-auth"
+    description = "Kafka and RabbitMQ brokers to Auth JWKS"
+  },
+]
+allow_private_peer_ipv4_cidrs    = false
+approved_private_peer_ipv4_cidrs = []

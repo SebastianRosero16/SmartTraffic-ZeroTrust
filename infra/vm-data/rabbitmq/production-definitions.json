@@ -1,0 +1,121 @@
+{
+  "rabbit_version": "4.3.7",
+  "users": [],
+  "vhosts": [
+    {
+      "name": "smarttraffic"
+    }
+  ],
+  "permissions": [],
+  "topic_permissions": [],
+  "parameters": [],
+  "policies": [],
+  "queues": [
+    {
+      "name": "dashboard_updates_queue",
+      "vhost": "smarttraffic",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "alert_updates_queue",
+      "vhost": "smarttraffic",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "query_traffic_queue",
+      "vhost": "smarttraffic",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "query_reply_client_1",
+      "vhost": "smarttraffic",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "query_reply_client_2",
+      "vhost": "smarttraffic",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "traffic_updates",
+      "vhost": "smarttraffic",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "query_answers",
+      "vhost": "smarttraffic",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "query_requests",
+      "vhost": "smarttraffic",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "traffic_updates",
+      "vhost": "smarttraffic",
+      "destination": "dashboard_updates_queue",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "traffic_updates",
+      "vhost": "smarttraffic",
+      "destination": "alert_updates_queue",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "query_requests",
+      "vhost": "smarttraffic",
+      "destination": "query_traffic_queue",
+      "destination_type": "queue",
+      "routing_key": "query_traffic_queue",
+      "arguments": {}
+    },
+    {
+      "source": "query_answers",
+      "vhost": "smarttraffic",
+      "destination": "query_reply_client_1",
+      "destination_type": "queue",
+      "routing_key": "query-client-1",
+      "arguments": {}
+    },
+    {
+      "source": "query_answers",
+      "vhost": "smarttraffic",
+      "destination": "query_reply_client_2",
+      "destination_type": "queue",
+      "routing_key": "query-client-2",
+      "arguments": {}
+    }
+  ]
+}

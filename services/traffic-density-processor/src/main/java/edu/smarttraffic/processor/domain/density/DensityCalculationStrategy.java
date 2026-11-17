@@ -6,4 +6,6 @@ import java.util.List;
 
 public interface DensityCalculationStrategy {
     double calculate(List<TrafficReading> readings, Instant evaluatedAt);
+
+    double calculateWindow(DensityWindowStatistics statistics);
 }

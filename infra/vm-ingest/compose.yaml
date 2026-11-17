@@ -1,0 +1,39 @@
+name: smarttraffic-vm-ingest
+
+services:
+  traffic-sensor-simulator:
+    image: smarttraffic/traffic-sensor-simulator:local
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:9092"
+      KAFKA_TRAFFIC_READINGS_TOPIC: "${KAFKA_TRAFFIC_READINGS_TOPIC:-traffic_readings}"
+      AUTH_TOKEN_ENDPOINT_URI: "${AUTH_TOKEN_ENDPOINT_URI:?Set HTTPS Auth token endpoint}"
+      KAFKA_OAUTH_CLIENT_ID: "${KAFKA_SENSOR_CLIENT_ID:?Set KAFKA_SENSOR_CLIENT_ID}"
+      KAFKA_OAUTH_CLIENT_SECRET: "${KAFKA_SENSOR_CLIENT_SECRET:?Set KAFKA_SENSOR_CLIENT_SECRET}"
+      KAFKA_OAUTH_SCOPE: "${KAFKA_SENSOR_OAUTH_SCOPE:?Set KAFKA_SENSOR_OAUTH_SCOPE}"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /run/certs/kafka-truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: "${KAFKA_TRUSTSTORE_PASSWORD:?Set KAFKA_TRUSTSTORE_PASSWORD}"
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      AUTH_SSL_TRUSTSTORE_LOCATION: /run/certs/auth-truststore.p12
+      AUTH_SSL_TRUSTSTORE_PASSWORD: "${AUTH_TRUSTSTORE_PASSWORD:?Set AUTH_TRUSTSTORE_PASSWORD}"
+      AUTH_SSL_TRUSTSTORE_TYPE: PKCS12
+      TRAFFIC_SENSOR_IDS: "${TRAFFIC_SENSOR_IDS:?Set TRAFFIC_SENSOR_IDS}"
+      TRAFFIC_ZONE_IDS: "${TRAFFIC_ZONE_IDS:?Set TRAFFIC_ZONE_IDS}"
+      TRAFFIC_MIN_VEHICLES: "${TRAFFIC_MIN_VEHICLES:?Set TRAFFIC_MIN_VEHICLES}"
+      TRAFFIC_MAX_VEHICLES: "${TRAFFIC_MAX_VEHICLES:?Set TRAFFIC_MAX_VEHICLES}"
+      TRAFFIC_INTERVAL_MS: "${TRAFFIC_INTERVAL_MS:?Set TRAFFIC_INTERVAL_MS}"
+    volumes:
+      - type: bind
+        source: "${APP_TLS_DIR:?Set APP_TLS_DIR to the client trust material directory}"
+        target: /run/certs
+        read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "${SIMULATOR_CPUS:?Set SIMULATOR_CPUS after sizing}"
+          memory: "${SIMULATOR_MEMORY:?Set SIMULATOR_MEMORY after sizing}"

@@ -1,0 +1,99 @@
+name: smarttraffic-vm-app
+
+x-rabbitmq-client: &rabbitmq-client
+  network_mode: host
+  restart: unless-stopped
+  environment: &rabbitmq-environment
+    RABBITMQ_HOST: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}"
+    RABBITMQ_PORT: "5672"
+    RABBITMQ_VHOST: "${RABBITMQ_VHOST:-smarttraffic}"
+    AUTH_TOKEN_ENDPOINT_URI: "${AUTH_TOKEN_ENDPOINT_URI:?Set HTTPS Auth token endpoint}"
+    AUTH_TLS_CA_CERT_PATH: /run/certs/auth-ca.pem
+    RABBITMQ_TLS_CA_CERT_PATH: /run/certs/rabbitmq-ca.pem
+  volumes:
+    - type: bind
+      source: "${APP_TLS_DIR:?Set APP_TLS_DIR to the client trust material directory}"
+      target: /run/certs
+      read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  user-dashboard-backend:
+    image: smarttraffic/user-dashboard-backend:local
+    <<: *rabbitmq-client
+    environment:
+      <<: *rabbitmq-environment
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_DASHBOARD_CLIENT_ID:?Set RABBITMQ_DASHBOARD_CLIENT_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_DASHBOARD_CLIENT_SECRET:?Set RABBITMQ_DASHBOARD_CLIENT_SECRET}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_DASHBOARD_OAUTH_SCOPE:?Set RABBITMQ_DASHBOARD_OAUTH_SCOPE}"
+      RABBITMQ_DASHBOARD_QUEUE: "${RABBITMQ_DASHBOARD_QUEUE:-dashboard_updates_queue}"
+      SERVER_ADDRESS: 127.0.0.1
+      SERVER_PORT: "8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "${DASHBOARD_CPUS:?Set DASHBOARD_CPUS after sizing}"
+          memory: "${DASHBOARD_MEMORY:?Set DASHBOARD_MEMORY after sizing}"
+
+  alert-dispatcher:
+    image: smarttraffic/alert-dispatcher:local
+    <<: *rabbitmq-client
+    environment:
+      <<: *rabbitmq-environment
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_ALERTS_CLIENT_ID:?Set RABBITMQ_ALERTS_CLIENT_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_ALERTS_CLIENT_SECRET:?Set RABBITMQ_ALERTS_CLIENT_SECRET}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_ALERTS_OAUTH_SCOPE:?Set RABBITMQ_ALERTS_OAUTH_SCOPE}"
+      RABBITMQ_ALERT_QUEUE: "${RABBITMQ_ALERT_QUEUE:-alert_updates_queue}"
+      RABBITMQ_QUERY_QUEUE: "${RABBITMQ_QUERY_QUEUE:-query_traffic_queue}"
+      RABBITMQ_QUERY_ANSWERS_EXCHANGE: "${RABBITMQ_QUERY_ANSWERS_EXCHANGE:-query_answers}"
+      RABBITMQ_QUERY_REPLY_ROUTES: "${RABBITMQ_QUERY_REPLY_ROUTES:?Set the allowlisted instance=queue pairs}"
+    deploy:
+      resources:
+        limits:
+          cpus: "${ALERTS_CPUS:?Set ALERTS_CPUS after sizing}"
+          memory: "${ALERTS_MEMORY:?Set ALERTS_MEMORY after sizing}"
+
+  query-client-1:
+    image: smarttraffic/query-client:local
+    <<: *rabbitmq-client
+    environment:
+      <<: *rabbitmq-environment
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_QUERY_CLIENT_1_ID:?Set RABBITMQ_QUERY_CLIENT_1_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_QUERY_CLIENT_1_SECRET:?Set RABBITMQ_QUERY_CLIENT_1_SECRET}"
+      RABBITMQ_QUERY_EXCHANGE: "${RABBITMQ_QUERY_EXCHANGE:?Set RABBITMQ_QUERY_EXCHANGE}"
+      RABBITMQ_QUERY_QUEUE: "${RABBITMQ_QUERY_QUEUE:-query_traffic_queue}"
+      RABBITMQ_QUERY_REPLY_QUEUE: "${RABBITMQ_QUERY_REPLY_QUEUE_1:?Set a provisioned reply queue for client 1}"
+      RABBITMQ_QUERY_CLIENT_ID: "${RABBITMQ_QUERY_CLIENT_1_ID:?Set RABBITMQ_QUERY_CLIENT_1_ID}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_QUERY_CLIENT_1_SCOPE:?Set RABBITMQ_QUERY_CLIENT_1_SCOPE}"
+      QUERY_ZONE_IDS: "${QUERY_ZONE_IDS:?Set QUERY_ZONE_IDS}"
+      QUERY_INTERVAL_SECONDS: "${QUERY_INTERVAL_SECONDS:-10}"
+      QUERY_TIMEOUT_SECONDS: "${QUERY_TIMEOUT_SECONDS:-10}"
+    deploy:
+      resources:
+        limits:
+          cpus: "${QUERY_CLIENT_CPUS:?Set QUERY_CLIENT_CPUS after sizing}"
+          memory: "${QUERY_CLIENT_MEMORY:?Set QUERY_CLIENT_MEMORY after sizing}"
+
+  query-client-2:
+    image: smarttraffic/query-client:local
+    <<: *rabbitmq-client
+    environment:
+      <<: *rabbitmq-environment
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_QUERY_CLIENT_2_ID:?Set RABBITMQ_QUERY_CLIENT_2_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_QUERY_CLIENT_2_SECRET:?Set RABBITMQ_QUERY_CLIENT_2_SECRET}"
+      RABBITMQ_QUERY_EXCHANGE: "${RABBITMQ_QUERY_EXCHANGE:?Set RABBITMQ_QUERY_EXCHANGE}"
+      RABBITMQ_QUERY_QUEUE: "${RABBITMQ_QUERY_QUEUE:-query_traffic_queue}"
+      RABBITMQ_QUERY_REPLY_QUEUE: "${RABBITMQ_QUERY_REPLY_QUEUE_2:?Set a provisioned reply queue for client 2}"
+      RABBITMQ_QUERY_CLIENT_ID: "${RABBITMQ_QUERY_CLIENT_2_ID:?Set RABBITMQ_QUERY_CLIENT_2_ID}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_QUERY_CLIENT_2_SCOPE:?Set RABBITMQ_QUERY_CLIENT_2_SCOPE}"
+      QUERY_ZONE_IDS: "${QUERY_ZONE_IDS:?Set QUERY_ZONE_IDS}"
+      QUERY_INTERVAL_SECONDS: "${QUERY_INTERVAL_SECONDS:-10}"
+      QUERY_TIMEOUT_SECONDS: "${QUERY_TIMEOUT_SECONDS:-10}"
+    deploy:
+      resources:
+        limits:
+          cpus: "${QUERY_CLIENT_CPUS:?Set QUERY_CLIENT_CPUS after sizing}"
+          memory: "${QUERY_CLIENT_MEMORY:?Set QUERY_CLIENT_MEMORY after sizing}"

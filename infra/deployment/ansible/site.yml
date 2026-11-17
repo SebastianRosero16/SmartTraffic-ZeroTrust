@@ -1,0 +1,483 @@
+---
+- name: Install host firewall and runtime on all SmartTraffic VMs
+  hosts: smarttraffic
+  become: true
+  serial: 1
+  tasks:
+    - name: Require deployment inputs before changing hosts
+      ansible.builtin.assert:
+        that:
+          - smarttraffic_checkout | length > 0
+          - smarttraffic_secrets_source | length > 0
+          - smarttraffic_role in smarttraffic_vm_ips
+          - smarttraffic_vm_ips[smarttraffic_role] is match('^[0-9.]+$')
+          - smarttraffic_vpc_cidr is match('^[0-9./]+$')
+          - smarttraffic_vpc_dns_ipv4 is match('^[0-9.]+$')
+          - ansible_ssh_private_key_file | length > 0
+        fail_msg: >-
+          Set the checkout/secrets paths, Terraform private IP outputs, VPC
+          CIDR, resolver address, and operator SSH key before deployment.
+    - name: Install Docker, nftables, and rsync from Amazon Linux repositories
+      ansible.builtin.dnf:
+        name:
+          - docker
+          - nftables
+          - rsync
+        state: present
+    - name: Create Docker CLI plugin directory
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+    - name: Install pinned Docker Buildx plugin with checksum verification
+      ansible.builtin.get_url:
+        url: https://github.com/docker/buildx/releases/download/v0.39.0/buildx-v0.39.0.linux-amd64
+        dest: /usr/local/lib/docker/cli-plugins/docker-buildx
+        checksum: sha256:5fb31a097304fbf6dd4038649a0decf32c2b9510e4047acd7d68b9d700c46194
+        owner: root
+        group: root
+        mode: "0755"
+    - name: Install pinned Docker Compose plugin with checksum verification
+      ansible.builtin.get_url:
+        url: https://github.com/docker/compose/releases/download/v5.7.1/docker-compose-linux-x86_64
+        dest: /usr/local/lib/docker/cli-plugins/docker-compose
+        checksum: sha256:af426722a8af5de812fcee30cc1c39f0639f5f723cbadefb25e5d4db054064cf
+        owner: root
+        group: root
+        mode: "0755"
+    - name: Install default-deny nftables rules
+      ansible.builtin.template:
+        src: templates/smarttraffic.nft.j2
+        dest: /etc/sysconfig/smarttraffic.nft
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Apply nftables
+    - name: Configure nftables service input
+      ansible.builtin.copy:
+        content: "include \"/etc/sysconfig/smarttraffic.nft\"\n"
+        dest: /etc/sysconfig/nftables.conf
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Apply nftables
+    - name: Validate nftables configuration
+      ansible.builtin.command:
+        argv:
+          - nft
+          - -c
+          - -f
+          - /etc/sysconfig/nftables.conf
+      changed_when: false
+    - name: Enable Docker and nftables
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - docker
+        - nftables
+    - name: Apply pending firewall update before deployment
+      ansible.builtin.meta: flush_handlers
+    - name: Create deployment directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: "0750"
+      loop:
+        - /opt/smarttraffic
+        - /etc/smarttraffic
+    - name: Create private mounted-secrets directory
+      ansible.builtin.file:
+        path: "/etc/smarttraffic/secrets/{{ smarttraffic_role }}"
+        state: directory
+        owner: root
+        group: "10001"
+        mode: "0750"
+    - name: Copy project source without local state or secrets
+      ansible.posix.synchronize:
+        src: >-
+          {{
+            (smarttraffic_checkout | default('', true) | trim | realpath)
+            if (
+              (smarttraffic_checkout | default('', true) | trim | length) > 0
+              and ((smarttraffic_checkout | default('', true) | trim) is match('^/'))
+              and (smarttraffic_checkout | default('', true) | trim | realpath) != '/'
+            )
+            else undef(hint='SMARTTRAFFIC_CHECKOUT must resolve to an absolute, non-root checkout path')
+          }}/
+        dest: /opt/smarttraffic/
+        archive: true
+        delete: false
+        ssh_args: "{{ hostvars[inventory_hostname].ansible_ssh_common_args }}"
+        rsync_opts:
+          - "--exclude=.git/"
+          - "--exclude=target/"
+          - "--exclude=.terraform/"
+          - "--exclude=**/.env"
+          - "--exclude=**/secrets/"
+          - "--exclude=**/data/"
+          - "--exclude=*.tfstate*"
+          - "--exclude=*.tfplan"
+      delegate_to: localhost
+      become: false
+    - name: Verify Docker Buildx is available
+      ansible.builtin.command:
+        argv:
+          - docker
+          - buildx
+          - version
+      changed_when: false
+    - name: Verify Docker Compose is available
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - version
+      changed_when: false
+    - name: Build this VM's Java service images
+      ansible.builtin.command:
+        argv:
+          - docker
+          - buildx
+          - build
+          - --network=host
+          - --file
+          - /opt/smarttraffic/infra/images/app.Dockerfile
+          - --build-arg
+          - "MAVEN_MODULE={{ item.module }}"
+          - --build-arg
+          - "MAIN_CLASS={{ item.main_class }}"
+          - --tag
+          - "{{ item.image }}"
+          - --load
+          - /opt/smarttraffic
+        chdir: /opt/smarttraffic
+      loop: "{{ smarttraffic_java_images[smarttraffic_role] }}"
+      changed_when: true
+    - name: Build the Kafka OAuth image on the data VM
+      ansible.builtin.command:
+        argv:
+          - docker
+          - buildx
+          - build
+          - --network=host
+          - --file
+          - /opt/smarttraffic/infra/vm-data/Dockerfile
+          - --tag
+          - smarttraffic/kafka-oauth:4.4.0-oauth-0.18.1
+          - --load
+          - /opt/smarttraffic/infra/vm-data
+        chdir: /opt/smarttraffic
+      when: smarttraffic_role == "vm-data"
+      changed_when: true
+    - name: Install this VM's runtime environment file
+      ansible.builtin.copy:
+        src: "{{ smarttraffic_secrets_source }}/{{ smarttraffic_env_files[smarttraffic_role] }}"
+        dest: "/etc/smarttraffic/{{ smarttraffic_role }}.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+    - name: Install this VM's mounted certificates and configuration
+      ansible.builtin.copy:
+        src: "{{ smarttraffic_secrets_source }}/{{ smarttraffic_role }}/"
+        dest: "/etc/smarttraffic/secrets/{{ smarttraffic_role }}/"
+        owner: root
+        group: "10001"
+        mode: preserve
+      register: smarttraffic_mounted_config_copy
+      no_log: true
+    - name: Set group-readable mounted secret permissions
+      ansible.builtin.command:
+        argv:
+          - find
+          - "/etc/smarttraffic/secrets/{{ smarttraffic_role }}"
+          - -type
+          - d
+          - -exec
+          - chmod
+          - "0750"
+          - "{}"
+          - +
+      changed_when: true
+    - name: Set read-only mounted secret file permissions
+      ansible.builtin.command:
+        argv:
+          - find
+          - "/etc/smarttraffic/secrets/{{ smarttraffic_role }}"
+          - -type
+          - f
+          - -exec
+          - chmod
+          - "0440"
+          - "{}"
+          - +
+      changed_when: true
+    - name: Validate this VM's Compose configuration
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - "/etc/smarttraffic/{{ smarttraffic_role }}.env"
+          - --file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_files[smarttraffic_role] }}"
+          - config
+          - --quiet
+      changed_when: false
+
+  handlers:
+    - name: Apply nftables
+      ansible.builtin.systemd:
+        name: nftables
+        state: restarted
+
+- name: Start Auth Server before the brokers
+  hosts: vm-auth
+  become: true
+  tasks:
+    - name: Start Auth Server with HTTPS enabled
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - /etc/smarttraffic/vm-auth.env
+          - --file
+          - /opt/smarttraffic/infra/vm-auth/compose.yaml
+          - up
+          - --detach
+          - --no-build
+          - --wait
+      changed_when: true
+    - name: Restart Auth Server when mounted configuration changes
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - /etc/smarttraffic/vm-auth.env
+          - --file
+          - /opt/smarttraffic/infra/vm-auth/compose.yaml
+          - restart
+          - auth-server
+      when: hostvars['vm-auth'].smarttraffic_mounted_config_copy.changed | default(false)
+      changed_when: true
+    - name: Wait for the Auth Server HTTPS listener
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 443
+        state: started
+        timeout: 60
+
+- name: Start data services after Auth Server
+  hosts: vm-data
+  become: true
+  tasks:
+    - name: Start Kafka, RabbitMQ, and PostgreSQL
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - /etc/smarttraffic/vm-data.env
+          - --file
+          - /opt/smarttraffic/infra/vm-data/compose.aws.yaml
+          - up
+          - --detach
+          - --no-build
+          - --wait
+      changed_when: true
+- name: Provision Kafka topic and least-privilege client ACLs
+  hosts: vm-data
+  become: true
+  vars:
+    kafka_compose_exec:
+      - docker
+      - compose
+      - --env-file
+      - /etc/smarttraffic/vm-data.env
+      - --file
+      - /opt/smarttraffic/infra/vm-data/compose.aws.yaml
+      - exec
+      - -T
+      - kafka
+    kafka_admin_properties:
+      - --bootstrap-server
+      - localhost:9092
+      - --command-config
+      - /etc/kafka/secrets/kafka-admin.properties
+  tasks:
+    - name: Wait for authenticated Kafka administration
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-broker-api-versions.sh']
+            + kafka_admin_properties
+          }}
+      register: kafka_admin_ready
+      until: kafka_admin_ready.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Create the traffic readings topic when absent
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-topics.sh']
+            + kafka_admin_properties
+            + ['--create', '--if-not-exists', '--topic', 'traffic_readings',
+               '--partitions', '3', '--replication-factor', '1']
+          }}
+      register: traffic_topic_create
+      changed_when: "'Created topic traffic_readings.' in traffic_topic_create.stdout"
+
+    - name: Verify traffic readings topic has three partitions
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-topics.sh']
+            + kafka_admin_properties
+            + ['--describe', '--topic', 'traffic_readings']
+          }}
+      register: traffic_topic_description
+      changed_when: false
+      failed_when: "'PartitionCount: 3' not in traffic_topic_description.stdout"
+
+    - name: Allow the sensor to publish readings
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-acls.sh']
+            + kafka_admin_properties
+            + ['--add', '--allow-principal', 'User:traffic-sensor',
+               '--operation', 'Write', '--operation', 'Describe',
+               '--topic', 'traffic_readings']
+          }}
+      changed_when: true
+
+    - name: Allow idempotent writes by Kafka producers
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-acls.sh']
+            + kafka_admin_properties
+            + ['--add', '--allow-principal', item,
+               '--operation', 'IdempotentWrite', '--cluster']
+          }}
+      loop:
+        - User:traffic-sensor
+        - User:traffic-processor-kafka
+      changed_when: true
+
+    - name: Allow the processor to read traffic readings
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-acls.sh']
+            + kafka_admin_properties
+            + ['--add', '--allow-principal', 'User:traffic-processor-kafka',
+               '--operation', 'Read', '--operation', 'Describe',
+               '--topic', 'traffic_readings']
+          }}
+      changed_when: true
+
+    - name: Allow the processor to manage its prefixed internal topics
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-acls.sh']
+            + kafka_admin_properties
+            + ['--add', '--allow-principal', 'User:traffic-processor-kafka',
+               '--operation', 'All', '--topic', 'traffic-density-processor-',
+               '--resource-pattern-type', 'prefixed']
+          }}
+      changed_when: true
+
+    - name: Allow the processor to use its consumer group
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-acls.sh']
+            + kafka_admin_properties
+            + ['--add', '--allow-principal', 'User:traffic-processor-kafka',
+               '--operation', 'Read', '--group', 'traffic-density-processor']
+          }}
+      changed_when: true
+
+    - name: Allow the archiver to read traffic readings
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-acls.sh']
+            + kafka_admin_properties
+            + ['--add', '--allow-principal', 'User:traffic-archiver',
+               '--operation', 'Read', '--operation', 'Describe',
+               '--topic', 'traffic_readings']
+          }}
+      changed_when: true
+
+    - name: Allow the archiver to use its consumer group
+      ansible.builtin.command:
+        argv: >-
+          {{
+            kafka_compose_exec
+            + ['/opt/kafka/bin/kafka-acls.sh']
+            + kafka_admin_properties
+            + ['--add', '--allow-principal', 'User:traffic-archiver',
+               '--operation', 'Read', '--group', 'traffic-archiver']
+          }}
+      changed_when: true
+
+- name: Start consumers and query services
+  hosts: vm-core:vm-app
+  become: true
+  tasks:
+    - name: Start services for this application zone
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - "/etc/smarttraffic/{{ smarttraffic_role }}.env"
+          - --file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_files[smarttraffic_role] }}"
+          - up
+          - --detach
+          - --no-build
+          - --wait
+      changed_when: true
+
+- name: Start traffic ingestion after consumers
+  hosts: vm-ingest
+  become: true
+  tasks:
+    - name: Start the traffic sensor simulator
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - /etc/smarttraffic/vm-ingest.env
+          - --file
+          - /opt/smarttraffic/infra/vm-ingest/compose.yaml
+          - up
+          - --detach
+          - --no-build
+          - --wait
+      changed_when: true

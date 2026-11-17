@@ -42,6 +42,28 @@ infra/vm-data/.env
 infra/vm-data/secrets/
 infra/vm-data/data/
 
+# Local deployment configuration and mounted secrets
+infra/**/.env
+infra/**/secrets/
+infra/**/data/
+infra/deployment/local-secrets/
+infra/deployment/ansible/inventory/hosts.yml
+infra/deployment/ansible/group_vars/all.yml
+
+# Terraform state, plans, and local credentials
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+*.tfvars.save*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*

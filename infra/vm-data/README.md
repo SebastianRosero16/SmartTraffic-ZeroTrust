@@ -1,4 +1,33 @@
-# Kafka OAuth test broker
+# vm-data deployment and Kafka OAuth test broker
+
+`compose.aws.yaml` defines the production-shaped data VM services: Kafka on
+`9092`, RabbitMQ TLS on `5672`, and PostgreSQL on `5432`. It is separate from
+the local Kafka/RabbitMQ/PostgreSQL test fixtures described below. Host
+networking lets the VM's nftables input/output policy enforce each service
+flow; the Compose project publishes no ports through Docker.
+
+Before using it, create a protected `.env` from `.env.aws.example`, provision
+TLS materials, broker identities/ACLs, and PostgreSQL credentials, then
+validate with:
+
+```powershell
+docker compose --env-file .env --file compose.aws.yaml config --quiet
+```
+
+The RabbitMQ definitions file creates the application vhost, exchanges,
+queues, and per-query-client reply bindings. The deployment playbook creates
+the Kafka input topic and its client ACLs using the broker identity mounted on
+this VM; the Streams client is limited to its own prefixed internal topics.
+OAuth client credentials and RabbitMQ scopes must match the Auth Server
+configuration. Do not reuse fixture credentials, certificates, or `*-it`
+scopes for deployment. RabbitMQ's TLS and JWKS CA paths are fixed inside the
+container at `/etc/rabbitmq/certs`; its relative memory watermark is configured
+in `rabbitmq-production.conf`, rather than the deprecated environment variable.
+The RabbitMQ container runs as UID `999` and GID `10001` so its primary group
+can read the mounted private key without relying on supplementary groups that
+the image entrypoint drops when switching from root.
+
+## Local Kafka OAuth test broker
 
 This Compose project is a local, single-node test environment for Kafka
 4.4.0 with the Strimzi Kafka OAuth broker plugin 0.18.1. It is not the final

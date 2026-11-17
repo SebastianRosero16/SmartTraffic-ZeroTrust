@@ -52,4 +52,27 @@ public final class TimeWeightedDensityStrategy implements DensityCalculationStra
 
         return weightedVehicleCount / totalWeight;
     }
+
+    @Override
+    public double calculateWindow(DensityWindowStatistics statistics) {
+        if (statistics == null) {
+            throw new IllegalArgumentException("Window statistics are required");
+        }
+
+        double windowSeconds = windowNanos / 1_000_000_000.0;
+        if (statistics.elapsedSeconds() > windowSeconds) {
+            throw new IllegalArgumentException("Readings span more than the calculation window");
+        }
+
+        double weightAtLatestReading = windowSeconds - statistics.elapsedSeconds();
+        double weightedVehicleCount = statistics.totalVehicleCount() * weightAtLatestReading
+                + statistics.weightedVehicleOffsetSeconds();
+        double totalWeight = statistics.readingCount() * weightAtLatestReading
+                + statistics.timestampOffsetSeconds();
+        if (totalWeight == 0) {
+            throw new IllegalArgumentException("No readings fall inside the calculation window");
+        }
+
+        return weightedVehicleCount / totalWeight;
+    }
 }

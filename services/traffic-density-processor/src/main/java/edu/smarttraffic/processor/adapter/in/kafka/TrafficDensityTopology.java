@@ -7,6 +7,8 @@ import edu.smarttraffic.contracts.ZoneId;
 import edu.smarttraffic.kafkaserdes.JsonSerde;
 import edu.smarttraffic.processor.application.port.out.TrafficUpdatePublisher;
 import edu.smarttraffic.processor.domain.aggregate.ZoneTrafficAggregate;
+import edu.smarttraffic.processor.domain.density.AverageDensityStrategy;
+import edu.smarttraffic.processor.domain.density.DensityCalculationStrategy;
 import edu.smarttraffic.processor.domain.event.TrafficEventObserver;
 import edu.smarttraffic.processor.domain.state.TrafficThresholds;
 import java.time.Duration;
@@ -43,6 +45,7 @@ public final class TrafficDensityTopology {
     private final Duration windowGrace;
     private final TrafficThresholds thresholds;
     private final TrafficUpdatePublisher updatePublisher;
+    private final DensityCalculationStrategy densityStrategy;
     private final List<TrafficEventObserver> observers;
     private final JsonSerde<TrafficReading> readingSerde = new JsonSerde<>(TrafficReading.class);
     private final JsonSerde<ZoneWindowAggregate> aggregateSerde = new JsonSerde<>(ZoneWindowAggregate.class);
@@ -53,7 +56,14 @@ public final class TrafficDensityTopology {
             Duration windowGrace,
             TrafficThresholds thresholds,
             TrafficUpdatePublisher updatePublisher) {
-        this(readingsTopic, windowSize, windowGrace, thresholds, updatePublisher, List.of());
+        this(
+                readingsTopic,
+                windowSize,
+                windowGrace,
+                thresholds,
+                updatePublisher,
+                new AverageDensityStrategy(),
+                List.of());
     }
 
     public TrafficDensityTopology(
@@ -62,6 +72,24 @@ public final class TrafficDensityTopology {
             Duration windowGrace,
             TrafficThresholds thresholds,
             TrafficUpdatePublisher updatePublisher,
+            List<TrafficEventObserver> observers) {
+        this(
+                readingsTopic,
+                windowSize,
+                windowGrace,
+                thresholds,
+                updatePublisher,
+                new AverageDensityStrategy(),
+                observers);
+    }
+
+    public TrafficDensityTopology(
+            String readingsTopic,
+            Duration windowSize,
+            Duration windowGrace,
+            TrafficThresholds thresholds,
+            TrafficUpdatePublisher updatePublisher,
+            DensityCalculationStrategy densityStrategy,
             List<TrafficEventObserver> observers) {
         if (readingsTopic == null || readingsTopic.isBlank()) {
             throw new IllegalArgumentException("Readings topic is required");
@@ -89,6 +117,7 @@ public final class TrafficDensityTopology {
         this.windowGrace = windowGrace;
         this.thresholds = Objects.requireNonNull(thresholds, "Traffic thresholds are required");
         this.updatePublisher = Objects.requireNonNull(updatePublisher, "Traffic update publisher is required");
+        this.densityStrategy = Objects.requireNonNull(densityStrategy, "Density strategy is required");
         this.observers = List.copyOf(Objects.requireNonNull(observers, "Traffic observers are required"));
     }
 
@@ -167,7 +196,7 @@ public final class TrafficDensityTopology {
                 thresholds,
                 observers,
                 initialStatus);
-        double density = aggregate.averageVehicleCount();
+        double density = densityStrategy.calculateWindow(aggregate.densityStatistics());
         TrafficStatus status = domainAggregate.processAggregate(
                 Math.toIntExact(aggregate.totalVehicleCount()),
                 density,

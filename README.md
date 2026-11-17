@@ -2,7 +2,7 @@
 
 Proyecto final del ejercicio 12 para las asignaturas de Sistemas Distribuidos, Sistemas Operativos y Programación Orientada a Objetos. SmartTraffic propone una arquitectura distribuida para simular lecturas de sensores de tráfico, calcular el nivel de congestión por zona, distribuir actualizaciones y alertas, responder consultas y conservar un histórico.
 
-> **Estado:** implementación parcial. El flujo local simulador → Kafka → Kafka Streams → RabbitMQ pasó una prueba end-to-end con brokers aislados. El backend y la interfaz del dashboard ya implementan el tramo RabbitMQ → WebSocket, pero aún no se han validado juntos con un broker; la cola y la ruta WebSocket son provisionales. Alertas, consultas, VMs y reglas de red siguen pendientes.
+> **Estado:** implementación parcial. El flujo local simulador → Kafka → Kafka Streams → RabbitMQ pasó una prueba end-to-end con brokers aislados. El backend y la interfaz del dashboard implementan RabbitMQ → WebSocket; `alert-dispatcher` y `query-client` implementan alertas por cambios de estado y consultas asíncronas correlacionadas. Estos tres tramos todavía requieren validación conjunta con brokers. Nombres de producción, VMs y reglas de red siguen pendientes. Terraform está protegido contra creación por defecto; no se han creado recursos AWS ni se ha confirmado costo cero.
 
 ## Contexto y problema
 
@@ -48,25 +48,25 @@ El despliegue se divide en cinco zonas. Cada VM ejecutará los contenedores corr
 
 El sistema contempla siete microservicios y una interfaz web:
 
-| Componente | Función propuesta |
+| Componente | Responsabilidad |
 |---|---|
 | `auth_server` | Autenticar clientes de servicio y emitir tokens JWT. |
 | `traffic_sensor_simulator` | Generar lecturas aleatorias de sensores y enviarlas a Kafka. |
 | `traffic_density_processor` | Procesar eventos con Kafka Streams, mantener estado por zona y publicar actualizaciones en RabbitMQ. |
 | `traffic_archiver` | Consumir lecturas y almacenarlas como histórico en PostgreSQL. |
 | `user_dashboard_backend` | Consumir actualizaciones de tráfico y servirlas al dashboard mediante WebSocket. |
-| `alert_dispatcher` | Consumir actualizaciones, emitir alertas y responder consultas de tráfico. |
-| `query_client` | Publicar consultas asíncronas y recibir sus respuestas. |
+| `alert_dispatcher` | Mantener una réplica local, registrar cada transición de estado como alerta y responder consultas desde esa réplica. |
+| `query_client` | Enviar consultas periódicas por zona y recibir respuestas asíncronas con correlación por solicitud e instancia. |
 | `dashboard.html` | Interfaz web que presenta el estado recibido por el backend del dashboard. |
 
 ### Recorrido de los mensajes
 
 1. `traffic_sensor_simulator` genera lecturas y las publica en un tópico de Kafka.
 2. `traffic_density_processor` consume esas lecturas mediante Kafka Streams. La propuesta utiliza una KTable para mantener el estado del tráfico por zona; las claves, agregaciones y ventanas se definirán durante el diseño detallado.
-3. El procesador publica estados consolidados en el fanout exchange `traffic_updates` de RabbitMQ. Se contemplan colas independientes para el dashboard y el servicio de alertas, para que ambos reciban cada actualización. Los nombres `dashboard_updates_queue` y `alert_updates_queue` del diagrama son propuestas y quedan pendientes de aprobación del equipo; el enunciado no establece sus nombres.
-4. `user_dashboard_backend` entrega las actualizaciones al cliente web. `alert_dispatcher` mantiene su réplica del estado y genera alertas según las reglas del dominio.
+3. El procesador publica estados consolidados en el fanout exchange `traffic_updates` de RabbitMQ. Se contemplan colas independientes para el dashboard y el servicio de alertas, para que ambos reciban cada actualización. Los nombres `dashboard_updates_queue` y `alert_updates_queue` son provisionales y quedan pendientes de aprobación del equipo.
+4. `user_dashboard_backend` entrega las actualizaciones al cliente web. `alert_dispatcher` conserva la última actualización por zona, descarta marcas de tiempo antiguas y registra una alerta cuando cambia el estado, incluida la recuperación. Es una regla inicial de demostración, no una política de notificación aprobada.
 5. `traffic_archiver` consume las lecturas originales y las persiste en PostgreSQL.
-6. Cada instancia de `query_client` publica una consulta en la cola `query_traffic_queue`, con un `correlationId` y el nombre de su cola de respuesta en `replyTo`. `alert_dispatcher` consume la consulta y publica la respuesta en el topic exchange `query_answers`, usando una clave de enrutamiento asociada a la instancia. Cada instancia recibe la respuesta en su propia cola.
+6. Cada instancia de `query_client` publica una consulta con zonas, `requestId`, `correlationId` y su cola en `replyTo`. `alert_dispatcher` responde desde su réplica local en el topic exchange `query_answers`, usando `instanceId` como clave de enrutamiento. El cliente valida la correlación y registra zonas sin estado disponible.
 
 ## Seguridad Zero Trust
 
@@ -195,15 +195,17 @@ Las responsabilidades son iniciales y no reemplazan la revisión cruzada: el equ
 
 ## Estado y etapas previstas
 
-El simulador publica lecturas JSON en Kafka con la configuración OAuth compartida. La topología del procesador cuenta con pruebas `TopologyTestDriver` y su flujo con el simulador y RabbitMQ se validó localmente con brokers aislados; el resultado y sus límites están documentados en el [README del procesador](services/traffic-density-processor/README.md). La validación manual de reautenticación Kafka está descrita en la guía de integración y no equivale a una prueba end-to-end de todos los servicios. El archivador tiene pruebas automatizadas, pero aún no se ha validado en ese ensayo contra un broker y una base de datos reales. El backend y la interfaz del dashboard están implementados en código, pero su integración RabbitMQ/WebSocket no está probada contra un broker; los valores de cola y endpoint siguen siendo provisionales (ver [README del backend](services/user-dashboard-backend/README.md)). Las VMs, reglas `nftables`, alertas y consultas siguen pendientes.
+El simulador publica lecturas JSON en Kafka con la configuración OAuth compartida. La topología del procesador cuenta con pruebas `TopologyTestDriver` y su flujo con el simulador y RabbitMQ se validó localmente con brokers aislados; el resultado y sus límites están documentados en el [README del procesador](services/traffic-density-processor/README.md). La validación manual de reautenticación Kafka no equivale a una prueba end-to-end de todos los servicios. El archivador tiene pruebas automatizadas, pero aún no se ha validado contra un broker y una base de datos reales. El backend y la interfaz del dashboard, el dispatcher y el cliente de consultas ya tienen implementación y pruebas unitarias; la integración RabbitMQ/WebSocket y el flujo de consultas/alertas no se han probado juntos con broker. Sus colas y permisos productivos siguen pendientes (ver [README del backend](services/user-dashboard-backend/README.md), [README del dispatcher](services/alert-dispatcher/README.md) y [README del cliente](services/query-client/README.md)). Las VMs y reglas `nftables` siguen pendientes.
 
-Etapas previstas:
+La prueba de integración del archivador con PostgreSQL, migración Flyway y validación de esquema ya está preparada, pero se omite por defecto y todavía no se ha ejecutado contra una base real; sus instrucciones están en el [README del archivador](services/traffic-archiver/README.md).
 
-1. Acordar la arquitectura, los contratos, los puertos y los requisitos de recursos.
+Etapas pendientes:
+
+1. Acordar los nombres productivos, reglas de alertas, scopes, puertos y requisitos de recursos.
 2. Preparar y probar el aprovisionamiento y la conectividad de las cinco VMs.
-3. Probar la autenticación y la autorización con Kafka y RabbitMQ.
-4. Implementar progresivamente el flujo de ingesta, procesamiento y distribución.
-5. Incorporar la persistencia, el dashboard, las alertas y las consultas.
-6. Completar las pruebas, la documentación, la validación de seguridad y la preparación de la sustentación.
+3. Validar juntos los flujos de dashboard, alertas, consultas y archivado con brokers y base de datos.
+4. Completar Compose por VM, reglas `nftables`, monitoreo, límites de recursos y la revisión de seguridad.
+5. Confirmar con AWS/profesor la elegibilidad y cobertura real sin cargos antes de desplegar; Terraform permanece desactivado.
+6. Completar la documentación final y preparar la sustentación.
 
 Las etapas y tecnologías concretas podrán ajustarse tras validar la compatibilidad, los recursos disponibles y los requisitos del curso.

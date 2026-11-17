@@ -1,0 +1,84 @@
+name: smarttraffic-vm-core
+
+services:
+  traffic-density-processor:
+    image: smarttraffic/traffic-density-processor:local
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:9092"
+      KAFKA_TRAFFIC_READINGS_TOPIC: "${KAFKA_TRAFFIC_READINGS_TOPIC:-traffic_readings}"
+      KAFKA_STREAMS_APPLICATION_ID: "${KAFKA_STREAMS_APPLICATION_ID:?Set KAFKA_STREAMS_APPLICATION_ID}"
+      AUTH_TOKEN_ENDPOINT_URI: "${AUTH_TOKEN_ENDPOINT_URI:?Set HTTPS Auth token endpoint}"
+      KAFKA_OAUTH_CLIENT_ID: "${KAFKA_PROCESSOR_CLIENT_ID:?Set KAFKA_PROCESSOR_CLIENT_ID}"
+      KAFKA_OAUTH_CLIENT_SECRET: "${KAFKA_PROCESSOR_CLIENT_SECRET:?Set KAFKA_PROCESSOR_CLIENT_SECRET}"
+      KAFKA_OAUTH_SCOPE: "${KAFKA_PROCESSOR_OAUTH_SCOPE:?Set KAFKA_PROCESSOR_OAUTH_SCOPE}"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /run/certs/kafka-truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: "${KAFKA_TRUSTSTORE_PASSWORD:?Set KAFKA_TRUSTSTORE_PASSWORD}"
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      AUTH_SSL_TRUSTSTORE_LOCATION: /run/certs/auth-truststore.p12
+      AUTH_SSL_TRUSTSTORE_PASSWORD: "${AUTH_TRUSTSTORE_PASSWORD:?Set AUTH_TRUSTSTORE_PASSWORD}"
+      AUTH_SSL_TRUSTSTORE_TYPE: PKCS12
+      RABBITMQ_HOST: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}"
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_VHOST: "${RABBITMQ_VHOST:-smarttraffic}"
+      RABBITMQ_EXCHANGE: "${RABBITMQ_UPDATES_EXCHANGE:-traffic_updates}"
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_PROCESSOR_CLIENT_ID:?Set RABBITMQ_PROCESSOR_CLIENT_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_PROCESSOR_CLIENT_SECRET:?Set RABBITMQ_PROCESSOR_CLIENT_SECRET}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_PROCESSOR_OAUTH_SCOPE:?Set RABBITMQ_PROCESSOR_OAUTH_SCOPE}"
+      AUTH_TLS_CA_CERT_PATH: /run/certs/auth-ca.pem
+      RABBITMQ_TLS_CA_CERT_PATH: /run/certs/rabbitmq-ca.pem
+      TRAFFIC_WINDOW_SECONDS: "${TRAFFIC_WINDOW_SECONDS:?Set TRAFFIC_WINDOW_SECONDS}"
+      TRAFFIC_WINDOW_GRACE_SECONDS: "${TRAFFIC_WINDOW_GRACE_SECONDS:?Set TRAFFIC_WINDOW_GRACE_SECONDS}"
+      TRAFFIC_DENSITY_STRATEGY: "${TRAFFIC_DENSITY_STRATEGY:-average}"
+      TRAFFIC_MODERATE_THRESHOLD: "${TRAFFIC_MODERATE_THRESHOLD:?Set TRAFFIC_MODERATE_THRESHOLD}"
+      TRAFFIC_CONGESTED_THRESHOLD: "${TRAFFIC_CONGESTED_THRESHOLD:?Set TRAFFIC_CONGESTED_THRESHOLD}"
+    volumes:
+      - type: bind
+        source: "${APP_TLS_DIR:?Set APP_TLS_DIR to the client trust material directory}"
+        target: /run/certs
+        read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "${PROCESSOR_CPUS:?Set PROCESSOR_CPUS after sizing}"
+          memory: "${PROCESSOR_MEMORY:?Set PROCESSOR_MEMORY after sizing}"
+
+  traffic-archiver:
+    image: smarttraffic/traffic-archiver:local
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:9092"
+      KAFKA_TRAFFIC_READINGS_TOPIC: "${KAFKA_TRAFFIC_READINGS_TOPIC:-traffic_readings}"
+      AUTH_TOKEN_ENDPOINT_URI: "${AUTH_TOKEN_ENDPOINT_URI:?Set HTTPS Auth token endpoint}"
+      KAFKA_OAUTH_CLIENT_ID: "${KAFKA_ARCHIVER_CLIENT_ID:?Set KAFKA_ARCHIVER_CLIENT_ID}"
+      KAFKA_OAUTH_CLIENT_SECRET: "${KAFKA_ARCHIVER_CLIENT_SECRET:?Set KAFKA_ARCHIVER_CLIENT_SECRET}"
+      KAFKA_OAUTH_SCOPE: "${KAFKA_ARCHIVER_OAUTH_SCOPE:?Set KAFKA_ARCHIVER_OAUTH_SCOPE}"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /run/certs/kafka-truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: "${KAFKA_TRUSTSTORE_PASSWORD:?Set KAFKA_TRUSTSTORE_PASSWORD}"
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      AUTH_SSL_TRUSTSTORE_LOCATION: /run/certs/auth-truststore.p12
+      AUTH_SSL_TRUSTSTORE_PASSWORD: "${AUTH_TRUSTSTORE_PASSWORD:?Set AUTH_TRUSTSTORE_PASSWORD}"
+      AUTH_SSL_TRUSTSTORE_TYPE: PKCS12
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:5432/${POSTGRES_DB:-smarttraffic}"
+      SPRING_DATASOURCE_USERNAME: "${POSTGRES_APP_USER:?Set POSTGRES_APP_USER}"
+      SPRING_DATASOURCE_PASSWORD: "${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD}"
+    volumes:
+      - type: bind
+        source: "${APP_TLS_DIR:?Set APP_TLS_DIR to the client trust material directory}"
+        target: /run/certs
+        read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "${ARCHIVER_CPUS:?Set ARCHIVER_CPUS after sizing}"
+          memory: "${ARCHIVER_MEMORY:?Set ARCHIVER_MEMORY after sizing}"
