@@ -62,9 +62,14 @@ docker run --rm `
 The suite requests tokens directly from the test Auth Server and never prints
 or saves them. It checks valid publisher/reader operations, unknown signing
 keys, an invalid signature, expiration, audience, insufficient resource
-permissions, a missing token, and whether a validly signed token with a
-different `iss` can authenticate. The `iss` result records the behavior of the
-selected broker and does not claim that RabbitMQ validates issuer equality.
+permissions, a missing token, and characterizes whether a validly signed token
+with a different `iss` can authenticate. On the pinned RabbitMQ 4.3.7
+backend, that token was accepted: the OAuth2 authentication path verifies the
+signature and algorithm but does not compare `iss` with an expected issuer.
+The existing case documents this behavior; it is not a negative rejection
+test. Issuer equality remains pending a backend change and a broker-backed
+negative test proving that a mismatched issuer is rejected. Do not treat an
+issuer/discovery configuration value by itself as proof of claim validation.
 
 The generated Auth Server configuration has separate test-only publisher,
 dashboard reader, alert dispatcher, and query client identities. Their random
