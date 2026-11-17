@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+inventory.yml
+inventory.local.yml
+ansible/group_vars/all.yml
+vault.yml
+*.vault
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks

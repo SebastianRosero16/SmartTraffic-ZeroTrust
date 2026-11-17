@@ -1,0 +1,14 @@
+all:
+  children:
+    smarttraffic:
+      children:
+        vm_auth:
+          hosts: {}
+        vm_data:
+          hosts: {}
+        vm_ingest:
+          hosts: {}
+        vm_core:
+          hosts: {}
+        vm_app:
+          hosts: {}

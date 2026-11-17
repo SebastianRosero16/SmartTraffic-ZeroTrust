@@ -1,0 +1,31 @@
+deployment:
+  approved: false
+  region: ""
+
+zones:
+  vm_auth:
+    ansible_host: ""
+    ansible_port: ""
+  vm_data:
+    ansible_host: ""
+    ansible_port: ""
+  vm_ingest:
+    ansible_host: ""
+    ansible_port: ""
+  vm_core:
+    ansible_host: ""
+    ansible_port: ""
+  vm_app:
+    ansible_host: ""
+    ansible_port: ""
+
+network:
+  approved_flows: []
+  dashboard_access_route: ""
+
+kafka:
+  advertised_listener: ""
+  client_port: ""
+
+tls:
+  material_path: ""
