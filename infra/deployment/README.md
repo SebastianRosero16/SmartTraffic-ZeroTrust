@@ -1,6 +1,8 @@
 # AWS deployment workflow
 
-The five private EC2 instances run separate Compose projects:
+The five role-specific EC2 instances run separate Compose projects. Their
+Security Groups have no application ingress by default; services communicate
+over private addresses:
 
 | VM | Compose file | Services |
 |---|---|---|
@@ -11,11 +13,12 @@ The five private EC2 instances run separate Compose projects:
 | `vm-app` | `infra/vm-app/compose.yaml` | Dashboard backend, alert dispatcher, two query clients |
 
 Compose files use Linux host networking intentionally: each VM's nftables
-firewall can enforce the service-to-service policy directly. The EC2 Security
-Groups and nftables both deny unsolicited inbound traffic; the dashboard is
-available to the presenter only through an SSM port-forward to
-`127.0.0.1:8080`. The exercise's application listeners are Kafka TCP `9092`,
-RabbitMQ TLS `5672`, PostgreSQL `5432`, and HTTPS Auth `443`.
+firewall can enforce the service-to-service policy directly. Security Groups
+and nftables deny unsolicited inbound traffic; the dashboard is available to
+the presenter only through an SSM port-forward to `127.0.0.1:8080`. Compose
+defines service listeners, but production network rules remain unconfigured
+until the owners confirm ports and flows in the
+[network matrix](../../docs/network-matrix.md).
 
 The two query clients are separate Compose services, not scaled copies. Each
 has a distinct OAuth identity, response queue, and routing key so correlated
@@ -25,18 +28,30 @@ with their own pre-provisioned identities and queues.
 ## Preparation
 
 1. Keep `enable_resource_creation = false` until Terraform's plan and current
-   account costs are reviewed. The NAT Gateway, Elastic IP, EC2 instances,
-   EBS, and data transfer can consume the account's credits.
-2. Create an operator SSH key pair locally. Register only its public key
-   through `operator_ssh_public_key`; keep the private key outside Git and on
-   the operator's workstation. Ansible tunnels SSH through Systems Manager,
-   so no inbound SSH Security Group rule is needed.
+   account costs are reviewed. EC2, EBS, public IPv4, networking, and data
+   transfer can consume the account's credits.
+2. Ansible tunnels SSH through Systems Manager; no inbound SSH Security Group
+   rule is needed. The current Terraform configuration does not provision an
+   operator SSH key. Before running Ansible, verify that the operator's public
+   key is already authorized for `ec2-user` on every target and that its
+   matching private key is local and outside Git. Do not change an existing
+   instance's key configuration or apply a plan that replaces instances
+   without reviewing the Terraform state and data-recovery plan.
 3. Use Terraform's instance outputs to copy
    `ansible/inventory/hosts.example.yml` to the ignored `hosts.yml`, and
    `ansible/group_vars/all.example.yml` to the ignored `group_vars/all.yml`.
-   Fill the VPC CIDR, VPC resolver address, and five private VM addresses
-   there; these local inventories are excluded from Git.
-4. Copy each Compose `.env.example` to a protected local deployment directory:
+   Fill the VPC CIDR, VPC resolver address, five private VM addresses, and
+   `data_volume_ids` from Terraform there; these local inventories are
+   excluded from Git.
+4. Before deployment, verify the three EBS IDs against the AWS account. Back
+   up and manually migrate any existing Kafka, RabbitMQ, or PostgreSQL data
+   before setting `smarttraffic_data_cutover_confirmed: true`. Prepare only
+   verified blank volumes manually, or preserve their existing supported
+   `ext4`/`xfs` filesystems; never format a volume containing data. The
+   playbook checks every attached device and filesystem before changing any
+   VM, never runs a formatting command, and fails closed if a device is
+   missing or unsupported.
+5. Copy each Compose `.env.example` to a protected local deployment directory:
    - `vm-auth.env`, `vm-data.env`, `vm-ingest.env`, `vm-core.env`, and
      `vm-app.env` go in `SMARTTRAFFIC_SECRETS_DIR`.
    - Each VM also has a same-named subdirectory containing its mounted keys,
@@ -44,7 +59,7 @@ with their own pre-provisioned identities and queues.
    - Never commit that directory, `.env` files, private keys, passwords, or
      certificates. Values marked `REPLACE_WITH_SECRET` are placeholders, not
      usable credentials.
-5. Confirm the TLS certificate SANs match the private IPs used for Auth,
+6. Confirm the TLS certificate SANs match the private IPs used for Auth,
    Kafka, and RabbitMQ; provision matching OAuth audiences and distinct client
    identities. The playbook creates the `traffic_readings` topic and grants
    Kafka ACLs to the simulator, processor, and archiver; the Streams ACL is
@@ -71,16 +86,18 @@ ansible-playbook --syntax-check site.yml
 ansible-playbook site.yml
 ```
 
-The playbook validates each Compose configuration and nftables file before
-starting services. It builds each VM's required images with Docker Buildx,
-then starts Compose with `--no-build` to keep image building and container
-startup as separate explicit steps. It starts Auth first (brokers retrieve JWKS),
-then data services and Kafka topic/ACLs, consumers/dashboard/query clients, and
-finally the traffic simulator. Images are built on their destination VMs; size EC2 and EBS for the
-JVM limits plus build-time memory. This workflow has been run against the
-project's AWS deployment. The playbook result and live service/data-flow checks
-are deployment evidence, but do not alone prove dashboard access, query/alert
-behavior, or account-specific cost.
+The playbook validates the required EBS devices, every Compose configuration,
+and nftables file before starting services. It excludes local environment
+files, inventories, certificates, keys, Terraform state, and secret directories
+from source sync, then checks the remote checkout for excluded files. It builds
+each VM's required images with Docker Buildx, then starts Compose with
+`--no-build` to keep image building and container startup as separate explicit
+steps. It starts Auth first (brokers retrieve JWKS), then data services and
+Kafka topic/ACLs, consumers/dashboard/query clients, and finally the traffic
+simulator. Images are built on their destination VMs; size EC2 and EBS for the
+JVM limits plus build-time memory. The EBS mount and guarded cutover changes
+have not been exercised against AWS; do not treat local validation as a live
+deployment or data-migration test.
 
 The Auth Server runs as UID/GID `10001`. Docker grants only
 `NET_BIND_SERVICE` so the non-root Java process can listen on HTTPS port 443;

@@ -14,6 +14,14 @@ validate with:
 docker compose --env-file .env --file compose.aws.yaml config --quiet
 ```
 
+For AWS, the three data services bind to
+`/srv/smarttraffic/{kafka,rabbitmq,postgres}`. Ansible mounts the corresponding
+EBS volumes at those paths only after it confirms the EBS IDs and an existing
+`ext4` or `xfs` filesystem. It never formats disks. Back up and migrate any
+existing Docker-volume data before confirming the cutover in the ignored
+Ansible inventory; the local named volumes described below apply only to the
+test fixtures.
+
 The RabbitMQ definitions file creates the application vhost, exchanges,
 queues, and per-query-client reply bindings. The deployment playbook creates
 the Kafka input topic and its client ACLs using the broker identity mounted on

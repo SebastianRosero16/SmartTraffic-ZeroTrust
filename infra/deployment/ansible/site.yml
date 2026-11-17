@@ -1,10 +1,10 @@
 ---
-- name: Install host firewall and runtime on all SmartTraffic VMs
+- name: Validate deployment inputs before changing any VM
   hosts: smarttraffic
-  become: true
-  serial: 1
+  gather_facts: false
+  any_errors_fatal: true
   tasks:
-    - name: Require deployment inputs before changing hosts
+    - name: Require deployment inputs
       ansible.builtin.assert:
         that:
           - smarttraffic_checkout | length > 0
@@ -17,6 +17,58 @@
         fail_msg: >-
           Set the checkout/secrets paths, Terraform private IP outputs, VPC
           CIDR, resolver address, and operator SSH key before deployment.
+    - name: Require prepared EBS data volumes before vm-data deployment
+      ansible.builtin.assert:
+        that:
+          - smarttraffic_data_cutover_confirmed | default(false) | bool
+          - ((smarttraffic_data_volumes | default({})).keys() | list | sort) == ['kafka', 'postgres', 'rabbitmq']
+          - (smarttraffic_data_volumes | default({})).get('postgres', {}).get('volume_id', '') is match('^vol-[0-9a-f]{8,}$')
+          - (smarttraffic_data_volumes | default({})).get('kafka', {}).get('volume_id', '') is match('^vol-[0-9a-f]{8,}$')
+          - (smarttraffic_data_volumes | default({})).get('rabbitmq', {}).get('volume_id', '') is match('^vol-[0-9a-f]{8,}$')
+        fail_msg: >-
+          Set the vm-data EBS volume IDs and confirm the manual backup and data
+          cutover in the ignored inventory. This playbook never formats disks.
+      when: smarttraffic_role == "vm-data"
+    - name: Wait for attached vm-data EBS devices
+      ansible.builtin.wait_for:
+        path: "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ item.value.volume_id | replace('-', '') }}"
+        state: present
+        timeout: 60
+      loop: "{{ smarttraffic_data_volumes | default({}) | dict2items }}"
+      become: true
+      when: smarttraffic_role == "vm-data"
+    - name: Detect existing filesystems on vm-data EBS devices
+      ansible.builtin.command:
+        argv:
+          - blkid
+          - -o
+          - value
+          - -s
+          - TYPE
+          - "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ item.value.volume_id | replace('-', '') }}"
+      loop: "{{ smarttraffic_data_volumes | default({}) | dict2items }}"
+      register: smarttraffic_ebs_filesystem_types
+      changed_when: false
+      failed_when: false
+      become: true
+      when: smarttraffic_role == "vm-data"
+    - name: Refuse unformatted or unsupported vm-data EBS devices
+      ansible.builtin.assert:
+        that:
+          - item.rc == 0
+          - item.stdout in ["ext4", "xfs"]
+        fail_msg: >-
+          The {{ item.item.key }} EBS device must already have an ext4 or xfs
+          filesystem. Verify its volume ID and prepare it manually; Ansible
+          never formats disks.
+      loop: "{{ (smarttraffic_ebs_filesystem_types | default({})).get('results', []) }}"
+      when: smarttraffic_role == "vm-data"
+
+- name: Install host firewall and runtime on all SmartTraffic VMs
+  hosts: smarttraffic
+  become: true
+  serial: 1
+  tasks:
     - name: Install Docker, nftables, and rsync from Amazon Linux repositories
       ansible.builtin.dnf:
         name:
@@ -81,6 +133,35 @@
         - nftables
     - name: Apply pending firewall update before deployment
       ansible.builtin.meta: flush_handlers
+    - name: Create vm-data mountpoint directories
+      ansible.builtin.file:
+        path: "{{ item.value.mountpoint }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: "{{ smarttraffic_data_volumes | default({}) | dict2items }}"
+      when: smarttraffic_role == "vm-data"
+    - name: Mount vm-data EBS filesystems persistently
+      ansible.posix.mount:
+        src: "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ item.item.value.volume_id | replace('-', '') }}"
+        path: "{{ item.item.value.mountpoint }}"
+        fstype: "{{ item.stdout }}"
+        opts: defaults
+        dump: "0"
+        passno: "{{ '2' if item.stdout == 'ext4' else '0' }}"
+        state: mounted
+      loop: "{{ (smarttraffic_ebs_filesystem_types | default({})).get('results', []) }}"
+      when: smarttraffic_role == "vm-data"
+    - name: Set vm-data volume-root permissions for container users
+      ansible.builtin.file:
+        path: "{{ item.value.mountpoint }}"
+        state: directory
+        owner: root
+        group: "{{ item.value.group }}"
+        mode: "{{ item.value.mode }}"
+      loop: "{{ smarttraffic_data_volumes | default({}) | dict2items }}"
+      when: smarttraffic_role == "vm-data"
     - name: Create deployment directories
       ansible.builtin.file:
         path: "{{ item }}"
@@ -118,13 +199,141 @@
           - "--exclude=.git/"
           - "--exclude=target/"
           - "--exclude=.terraform/"
-          - "--exclude=**/.env"
+          - "--exclude=**/.env*"
           - "--exclude=**/secrets/"
+          - "--exclude=**/local-secrets/"
           - "--exclude=**/data/"
+          - "--exclude=**/group_vars/all.yml"
+          - "--exclude=**/inventory/hosts.yml"
+          - "--exclude=**/*.pem"
+          - "--exclude=**/*.key"
+          - "--exclude=**/*.crt"
+          - "--exclude=**/*.cer"
+          - "--exclude=**/*.der"
+          - "--exclude=**/*.p12"
+          - "--exclude=**/*.pfx"
+          - "--exclude=**/*.p7b"
+          - "--exclude=**/*.p7c"
+          - "--exclude=**/*.jks"
+          - "--exclude=**/*.jceks"
+          - "--exclude=**/*.keystore"
+          - "--exclude=**/*.truststore"
+          - "--exclude=**/id_rsa"
+          - "--exclude=**/id_ed25519"
+          - "--exclude=**/id_ecdsa"
+          - "--exclude=**/*.tfvars*"
+          - "--exclude=**/*vault-password*"
           - "--exclude=*.tfstate*"
           - "--exclude=*.tfplan"
       delegate_to: localhost
       become: false
+    - name: Verify no local secrets were synchronized
+      ansible.builtin.command:
+        argv:
+          - find
+          - /opt/smarttraffic
+          - (
+          - -path
+          - "*/secrets/*"
+          - -o
+          - -path
+          - "*/local-secrets/*"
+          - -o
+          - -type
+          - f
+          - (
+          - -name
+          - ".env"
+          - -o
+          - -name
+          - ".env.*"
+          - -o
+          - -name
+          - "*.pem"
+          - -o
+          - -name
+          - "*.crt"
+          - -o
+          - -name
+          - "*.cer"
+          - -o
+          - -name
+          - "*.der"
+          - -o
+          - -name
+          - "*.key"
+          - -o
+          - -name
+          - "*.p12"
+          - -o
+          - -name
+          - "*.pfx"
+          - -o
+          - -name
+          - "*.p7b"
+          - -o
+          - -name
+          - "*.p7c"
+          - -o
+          - -name
+          - "*.jks"
+          - -o
+          - -name
+          - "*.jceks"
+          - -o
+          - -name
+          - "*.keystore"
+          - -o
+          - -name
+          - "*.truststore"
+          - -o
+          - -name
+          - "id_rsa"
+          - -o
+          - -name
+          - "id_ed25519"
+          - -o
+          - -name
+          - "id_ecdsa"
+          - -o
+          - -name
+          - "*.tfvars*"
+          - -o
+          - -name
+          - "*vault-password*"
+          - -o
+          - -name
+          - "*.tfstate*"
+          - -o
+          - -name
+          - "*.tfplan"
+          - -o
+          - -path
+          - "*/group_vars/all.yml"
+          - -o
+          - -path
+          - "*/inventory/hosts.yml"
+          - )
+          - -a
+          - -not
+          - -name
+          - "*.example"
+          - )
+          - -print
+          - -quit
+      register: smarttraffic_source_secret_scan
+      changed_when: false
+      failed_when: false
+      no_log: true
+    - name: Refuse to continue if excluded local files remain in the remote checkout
+      ansible.builtin.assert:
+        that:
+          - smarttraffic_source_secret_scan.rc == 0
+          - (smarttraffic_source_secret_scan.stdout | length) == 0
+        fail_msg: >-
+          The remote checkout contains files excluded from source sync, or the
+          scan failed. Remove the local secret/config artifacts from
+          /opt/smarttraffic and rerun deployment.
     - name: Verify Docker Buildx is available
       ansible.builtin.command:
         argv:

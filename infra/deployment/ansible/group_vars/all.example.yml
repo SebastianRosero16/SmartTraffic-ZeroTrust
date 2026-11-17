@@ -11,6 +11,24 @@ smarttraffic_vm_ips:
   vm-core: REPLACE_WITH_VM_CORE_PRIVATE_IP
   vm-app: REPLACE_WITH_VM_APP_PRIVATE_IP
 
+smarttraffic_data_cutover_confirmed: false
+smarttraffic_data_volumes:
+  postgres:
+    volume_id: REPLACE_WITH_POSTGRES_EBS_VOLUME_ID
+    mountpoint: /srv/smarttraffic/postgres
+    group: root
+    mode: "0750"
+  kafka:
+    volume_id: REPLACE_WITH_KAFKA_EBS_VOLUME_ID
+    mountpoint: /srv/smarttraffic/kafka
+    group: "10001"
+    mode: "0770"
+  rabbitmq:
+    volume_id: REPLACE_WITH_RABBITMQ_EBS_VOLUME_ID
+    mountpoint: /srv/smarttraffic/rabbitmq
+    group: "10001"
+    mode: "0770"
+
 smarttraffic_compose_files:
   vm-auth: infra/vm-auth/compose.yaml
   vm-data: infra/vm-data/compose.aws.yaml

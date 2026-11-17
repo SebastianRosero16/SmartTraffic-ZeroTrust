@@ -16,3 +16,11 @@ output "vm_public_ipv4_addresses" {
     role => instance.public_ip
   }
 }
+
+output "data_volume_ids" {
+  description = "EBS volume IDs for the vm-data service data disks, keyed by service."
+  value = {
+    for service, volume in aws_ebs_volume.data :
+    service => volume.id
+  }
+}
