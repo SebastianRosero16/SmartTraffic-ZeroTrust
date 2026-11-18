@@ -27,7 +27,7 @@ in Git.
 ## Run
 
 Build and install the reactor modules from the repository root, then start the
-simulator module with the configured environment:
+Spring Boot simulator module with the configured environment:
 
 ```powershell
 mvn install

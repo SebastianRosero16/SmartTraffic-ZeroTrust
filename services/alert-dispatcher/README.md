@@ -1,5 +1,8 @@
 # Alert dispatcher
 
+The service starts as a Spring Boot application and manages its RabbitMQ
+dispatcher lifecycle through the application context.
+
 `alert-dispatcher` consumes `TrafficUpdate` messages, keeps the latest
 timestamped state per zone in memory, logs an alert for each status transition,
 and serves `TrafficQuery` requests from that local snapshot. The initial state

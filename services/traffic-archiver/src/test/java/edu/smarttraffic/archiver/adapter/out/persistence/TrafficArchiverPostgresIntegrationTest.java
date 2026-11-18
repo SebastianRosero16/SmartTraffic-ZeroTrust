@@ -1,6 +1,7 @@
 package edu.smarttraffic.archiver.adapter.out.persistence;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import edu.smarttraffic.contracts.SensorId;
 import edu.smarttraffic.contracts.TrafficReading;
@@ -16,6 +17,7 @@ import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -65,6 +67,58 @@ class TrafficArchiverPostgresIntegrationTest {
                 "SELECT vehicle_count FROM traffic_readings WHERE event_id = ?",
                 Integer.class,
                 eventId));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM traffic_reading_audit WHERE event_id = ?",
+                Integer.class,
+                eventId));
+        assertEquals("INSERT", jdbcTemplate.queryForObject(
+                "SELECT operation FROM traffic_reading_audit WHERE event_id = ?",
+                String.class,
+                eventId));
+        assertEquals("sensor-first", jdbcTemplate.queryForObject(
+                "SELECT sensor_id FROM traffic_reading_audit WHERE event_id = ?",
+                String.class,
+                eventId));
+        assertEquals("zone-first", jdbcTemplate.queryForObject(
+                "SELECT zone_id FROM traffic_reading_audit WHERE event_id = ?",
+                String.class,
+                eventId));
+        assertEquals(Integer.valueOf(12), jdbcTemplate.queryForObject(
+                "SELECT vehicle_count FROM traffic_reading_audit WHERE event_id = ?",
+                Integer.class,
+                eventId));
+        assertEquals(Boolean.TRUE, jdbcTemplate.queryForObject(
+                "SELECT recorded_at IS NOT NULL FROM traffic_reading_audit WHERE event_id = ?",
+                Boolean.class,
+                eventId));
+    }
+
+    @Test
+    void rejectsMutationOfArchivedReadingsAndAuditRecords() {
+        var eventId = "postgres-it-" + UUID.randomUUID();
+        adapter.archive(new TrafficReading(
+                eventId,
+                new SensorId("sensor-immutable"),
+                new ZoneId("zone-immutable"),
+                Instant.parse("2026-11-11T12:00:00Z"),
+                7));
+
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
+                "UPDATE traffic_readings SET vehicle_count = 8 WHERE event_id = ?",
+                eventId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
+                "DELETE FROM traffic_readings WHERE event_id = ?",
+                eventId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
+                "UPDATE traffic_reading_audit SET operation = 'DELETE' WHERE event_id = ?",
+                eventId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
+                "DELETE FROM traffic_reading_audit WHERE event_id = ?",
+                eventId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.execute(
+                "TRUNCATE TABLE traffic_readings"));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.execute(
+                "TRUNCATE TABLE traffic_reading_audit"));
     }
 
     private static String requiredEnvironmentVariable(String name) {

@@ -20,19 +20,45 @@ The Terraform module is deliberately disabled by default:
 - Enabling creation also requires `cost_review_confirmed = true`. This is a
   deliberate human gate, not a pricing guarantee or a substitute for checking
   the AWS account.
-- The approved demonstration network uses one public subnet per VM in one
+- The Terraform network design uses one public subnet per VM in one
   selected `us-east-2` Availability Zone, one Internet Gateway, and one public
   route table. Each instance receives a dynamic public IPv4 address; no NAT
   Gateway or Elastic IP is created.
-- Security Groups have no ingress rules by default. The only built-in egress
-  is TCP 443 to IPv4 Internet destinations for SSM, image downloads, and OS
-  updates. Security Groups cannot restrict destinations by DNS name, so this
-  is port-restricted but not FQDN-restricted. No SSH, dashboard, Kafka,
-  RabbitMQ, or PostgreSQL ingress from the Internet is configured.
+- The Terraform module defines no ingress rules by default. Its built-in
+  egress is TCP 443 to IPv4 Internet destinations for SSM, image downloads,
+  and OS updates. Security Groups cannot restrict destinations by DNS name,
+  so the rule is port-restricted, not FQDN-restricted. No SSH or public
+  dashboard ingress is required for the tested SSM tunnel.
+- A read-only AWS console review on 17 November 2026 confirmed that the live
+  `smarttraffic` VPC differs from the Terraform network design: a route table
+  named `smarttraffic-private` is associated with five subnets and sends
+  `0.0.0.0/0` to an Available public NAT Gateway. The NAT Gateway's
+  `smarttraffic-nat` subnet has a public route to the Internet Gateway.
+  Terraform instead associates the VM subnets with one public route table and
+  sends their default route directly to the Internet Gateway; it defines no
+  NAT Gateway. Do not apply Terraform until its state and plan are reconciled
+  with these live resources, data recovery, and cost.
+- The local state matches the live network details inspected in the console:
+  the VPC and NAT Gateway, all six subnet IDs/CIDRs/AZs, both route tables, the
+  private default route, and the subnet associations. This does not verify all
+  69 state addresses. The repository HCL still describes a public-subnet design
+  without NAT. A complete read-only plan using `terraform.tfvars.example`
+  finished with 0 to add, 0 to change, and 68 to destroy: the example sets
+  `enable_resource_creation = false` while the state contains managed
+  resources. Do not apply this plan. No AWS resources were modified.
+- The five live Security Groups each allow TCP 443 to `0.0.0.0/0`, described
+  as temporary HTTPS egress. Other egress is role-scoped: `vm-data` to Auth
+  443 and DNS; `vm-ingest` to Auth 443 and `vm-data` 9092 plus DNS; `vm-core`
+  to Auth 443 and `vm-data` 9092/5672/5432 plus DNS; `vm-app` to Auth 443 and
+  `vm-data` 5672 plus DNS; `vm-auth` to DNS. `nftables` on all five VMs uses
+  default-drop policies, with TCP 443 permitted to destinations outside the
+  VPC CIDR. This is observed configuration, not approval of unrestricted
+  HTTPS egress.
 - The shared EC2 role attaches `AmazonSSMManagedInstanceCore` and is assigned
-  to all five instances through an instance profile. Héctor must still use an
-  appropriately scoped IAM identity; no user credentials or access keys are
-  stored in Terraform.
+  to all five instances through an instance profile. An SSM port-forward from
+  the presenter's laptop to `vm-app` succeeded; the IAM policy's exact resource
+  scope was not reviewed, so least-privilege access remains unverified. No user
+  credentials or access keys are stored in Terraform.
 - Security-group rules are managed only with the standalone ingress/egress
   rule resources. Do not add inline `ingress` or `egress` blocks to
   `aws_security_group`. The locked AWS Provider 5.100.0 removes AWS's default
@@ -64,7 +90,7 @@ and data transfer has been reviewed. The US$100 credit is a one-time balance,
 not a monthly allowance. EBS eligibility is unconfirmed and is excluded from
 credit assumptions.
 
-## Approved demonstration design
+## Terraform network design
 
 - Region: US East (Ohio), `us-east-2`; exactly one account-available
   Availability Zone.
@@ -77,23 +103,39 @@ credit assumptions.
   `vm-ingest`, `vm-core`, and `vm-app`.
 - Dynamic public IPv4 addresses and outbound Internet Gateway routing support
   SSM, Docker image downloads, and OS updates. No NAT Gateway is needed.
-- Administration and dashboard presentation use Session Manager. Use
-  port-forwarding from Héctor's laptop after the backend's production port is
-  confirmed. No SSH or public dashboard ingress rule is configured; Ansible
-  uses an operator key over an SSM-initiated SSH tunnel.
+- Administration and dashboard presentation use Session Manager. The live
+  demonstration reached the dashboard listener on `vm-app:8080` through a
+  local port-forward; this does not add or require public dashboard ingress.
+  Ansible uses an operator key over an SSM-initiated SSH tunnel.
 - VM-to-VM flows must use private addresses and role-scoped Security Groups.
-  Until production listeners and ports are approved, no application ingress
-  rules are created. Kafka, RabbitMQ, and PostgreSQL are never exposed to
-  Internet sources.
+  The Terraform defaults contain no application ingress rules. The live
+  demonstration showed application flows working, and the active AWS
+  Security Groups were subsequently inspected: `vm-app`, `vm-core`, and
+  `vm-ingest` had no ingress rules; `vm-auth` allowed TCP 443 from role
+  Security Groups, while `vm-data` allowed Kafka 9092, PostgreSQL 5432, and
+  RabbitMQ 5672 from role-specific sources. `nftables` on all five VMs
+  confirmed default-drop chains plus broad HTTPS egress outside the VPC CIDR.
+  RabbitMQ's live listener reported
+  `amqp/ssl` on port 5672, while PostgreSQL's runtime `SHOW ssl` returned
+  `off`. Kafka on `vm-data` and Auth Server on `vm-auth` negotiated TLS 1.3,
+  but OpenSSL did not trust the presented self-signed CA. Runtime inspection
+  found only 30 GiB root XFS disks on `vm-data`, `vm-core`, `vm-ingest`, and
+  `vm-auth`; the dedicated data volumes remain unobserved.
+  Reconcile the effective AWS rules with Terraform before
+  claiming reproducibility. Kafka, RabbitMQ, and PostgreSQL must not be
+  exposed to Internet sources.
 - One AZ is a cost-conscious demo topology, not high availability. An AZ
   outage interrupts every VM; the brokers and database are single-node and
   have no cross-AZ failover.
 
 The source matrix is [docs/network-matrix.md](../../docs/network-matrix.md).
-Production ports are still unconfirmed: Auth token/JWKS listeners; Kafka client
-and broker/controller listeners; RabbitMQ AMQPS; PostgreSQL; and the dashboard
-HTTP/WebSocket listener. Values such as fixture ports `5671`, `5432`, `5433`,
-`8080`, and `9092`/`9093` are not approved production assignments. Do not add
+The dashboard listener on `vm-app:127.0.0.1:8080` returned HTTP 302 to
+`/dashboard.html`; HTTPS/TLS did not negotiate on that port. It was reached
+through the SSM demonstration, but this is not approval for public ingress.
+Production assignments remain
+unconfirmed for Auth token/JWKS, Kafka client and broker/controller listeners,
+RabbitMQ AMQPS, and PostgreSQL. Values such as fixture ports `5671`, `5432`,
+`5433`, and `9092`/`9093` are not confirmed production assignments. Do not add
 them to `network_rules` until the service owners confirm listeners, TLS names,
 and client-to-service flows. The required SSM egress port is TCP 443. See
 [AWS services by Region](https://aws.amazon.com/about-aws/global-infrastructure/regional-product-services/)
@@ -107,11 +149,32 @@ The preliminary minimum Linux sizes are `t3.small` for `vm-auth`,
 recommendations. `vm-data` hosts Kafka, RabbitMQ, and PostgreSQL together and
 is a single point of failure.
 
-All root volumes are encrypted gp3. `vm-data` also receives three separately
-managed, encrypted gp3 data volumes: PostgreSQL 30 GiB, Kafka 20 GiB, and
-RabbitMQ 10 GiB. EBS is billed while volumes exist even if EC2 is stopped.
-The data volumes use Terraform `prevent_destroy`; deliberate retention and
-recovery work is required before their removal.
+All five live root volumes observed in the AWS console are encrypted gp3,
+with 30 GiB attached to their respective instances. This is not the complete
+Terraform design: `vm-data` was designed to receive three separately managed
+data volumes—PostgreSQL 30 GiB, Kafka 20 GiB, and RabbitMQ 10 GiB—but those
+separate volumes were not attached in the inspected live state. EBS is billed
+while volumes exist even if EC2 is stopped.
+
+The effective Docker CPU and memory limits were checked with `docker inspect`
+on all 11 running containers:
+
+| VM | Container(s) | CPU limit | Memory limit |
+|---|---|---:|---:|
+| `vm-auth` | Auth Server | 0.5 | 768 MiB |
+| `vm-data` | Kafka | 1 | 3 GiB |
+| `vm-data` | RabbitMQ | 0.5 | 1 GiB |
+| `vm-data` | PostgreSQL | 0.25 | 1 GiB |
+| `vm-ingest` | Traffic sensor simulator | 0.5 | 768 MiB |
+| `vm-core` | Traffic archiver | 0.5 | 1 GiB |
+| `vm-core` | Traffic density processor | 1 | 1.5 GiB |
+| `vm-app` | Dashboard backend | 0.5 | 768 MiB |
+| `vm-app` | Alert dispatcher | 0.5 | 768 MiB |
+| `vm-app` | Each of two query clients | 0.25 | 384 MiB |
+
+These are configured limits observed in the running containers. `docker stats`
+usage values were point-in-time samples and are not capacity or load-test
+results.
 
 Ansible identifies attached volumes by their EBS-derived NVMe device paths and
 mounts existing `ext4` or `xfs` filesystems persistently at
@@ -176,4 +239,6 @@ local and must never be committed.
 The AWS mock tests verify planned Terraform configuration only. They do not
 contact AWS and cannot prove live behavior, account service quotas, AZ
 availability, public-repository access, SSM registration, or application
-connectivity. No real Terraform plan or AWS operation is part of this PR.
+connectivity. A read-only plan against AWS using the example variables
+completed, but proposed 68 destructions as described above; do not apply it.
+No AWS resources were modified.

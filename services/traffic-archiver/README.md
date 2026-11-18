@@ -41,8 +41,13 @@ $env:SPRING_DATASOURCE_PASSWORD = "<the local password>"
 mvn -B -pl services/traffic-archiver -am test
 ```
 
-The test applies the Flyway migration, checks Hibernate schema validation, and
+The test applies the Flyway migrations, checks Hibernate schema validation,
 verifies that replaying an event ID does not overwrite the first archived
-reading. These local fixture credentials and the Compose port binding must not
-be reused for deployment. Stop the fixture with `docker compose` using the same
+reading or duplicate its audit record, and confirms that update/delete
+statements are rejected for archived readings and audit records. Database
+owners can still alter or disable triggers, so this protects normal application
+operations rather than a privileged database administrator. Audit records are
+created for new successful inserts after V2; existing historical rows are not
+backfilled. These local fixture credentials and the Compose port binding must
+not be reused for deployment. Stop the fixture with `docker compose` using the same
 arguments and `down`; add `-v` only when intentionally deleting its test data.

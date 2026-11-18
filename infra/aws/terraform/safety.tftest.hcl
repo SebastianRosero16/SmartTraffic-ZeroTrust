@@ -462,6 +462,7 @@ run "creates_no_application_ingress_without_confirmed_ports" {
     cost_review_confirmed    = true
     availability_zone        = "us-east-2a"
     vpc_cidr                 = "10.10.0.0/16"
+    network_rules            = []
     subnet_cidrs = {
       vm-auth   = "10.10.1.0/24"
       vm-data   = "10.10.2.0/24"

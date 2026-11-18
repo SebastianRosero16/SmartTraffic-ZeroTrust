@@ -19,11 +19,15 @@ late and are not included.
 `RabbitMqOAuthTrafficUpdatePublisher` implements the output port using OAuth
 2.0 `client_credentials` and AMQPS. It publishes persistent JSON messages and
 waits for publisher confirms. Unroutable messages and token/publish failures
-are surfaced to the caller. `TrafficDensityProcessorApplication` wires it to
-Kafka Streams and closes both services during JVM shutdown. Start the processor
-with
+are surfaced to the caller. `TrafficDensityProcessorApplication` starts as a
+Spring Boot application, wires the publisher to Kafka Streams, and closes both
+services during JVM shutdown. Start the processor with
 `edu.smarttraffic.processor.TrafficDensityProcessorApplication` after
 configuring both the Kafka and RabbitMQ variables below.
+
+The runtime wires a `TrafficEventLoggingObserver` into the domain aggregate.
+It logs status transitions and critical-density events; traffic updates are
+still published through the existing RabbitMQ output port.
 
 ## Required configuration
 

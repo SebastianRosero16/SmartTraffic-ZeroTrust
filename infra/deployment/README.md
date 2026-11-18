@@ -13,17 +13,20 @@ over private addresses:
 | `vm-app` | `infra/vm-app/compose.yaml` | Dashboard backend, alert dispatcher, two query clients |
 
 Compose files use Linux host networking intentionally: each VM's nftables
-firewall can enforce the service-to-service policy directly. Security Groups
-and nftables deny unsolicited inbound traffic; the dashboard is available to
-the presenter only through an SSM port-forward to `127.0.0.1:8080`. Compose
-defines service listeners, but production network rules remain unconfigured
-until the owners confirm ports and flows in the
+firewall can enforce the service-to-service policy directly. The dashboard
+was reached in the AWS demonstration only through an SSM port-forward
+targeting `127.0.0.1:8080` on `vm-app` (local port `18080`). This verified that presentation
+path, not the current Security Group or nftables rules. The Terraform defaults
+do not declare application rules, while application flows were observed in
+the live demo; reconcile the effective AWS rules with this source before
+claiming a reproducible deployment. See the
 [network matrix](../../docs/network-matrix.md).
 
-The two query clients are separate Compose services, not scaled copies. Each
-has a distinct OAuth identity, response queue, and routing key so correlated
-replies cannot be consumed by the wrong replica. Add further instances only
-with their own pre-provisioned identities and queues.
+The two query clients are fixed replicas defined as separate Compose services,
+not scaled copies. Each has a distinct OAuth identity, response queue, and
+routing key so correlated replies cannot be consumed by the wrong replica.
+Add further instances only with their own pre-provisioned identities and
+queues.
 
 ## Preparation
 
@@ -114,5 +117,46 @@ The operator retains AWS account ownership and runs Terraform/Ansible. Give
 the presenter a separate, least-privilege AWS identity with SSM session and
 port-forward permissions scoped to the tagged SmartTraffic instances. Do not
 share the root user, operator SSH private key, or application credentials.
-Héctor opens the dashboard locally through SSM port forwarding; no dashboard
-port is exposed to the Internet.
+Open the dashboard locally through SSM port forwarding; no dashboard port is
+exposed to the Internet.
+
+### Windows laptop with WSL
+
+Use an Ubuntu WSL shell with the [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+and [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-debian-and-ubuntu.html)
+installed. Sign in using the team's approved AWS method; the identity must be
+authorized to start an SSM session to `vm-app`. The instance must be online
+and managed by Systems Manager. Do not put access keys, instance credentials,
+or application secrets in this repository.
+
+Use only the authentication method approved by the AWS account owner:
+
+- If the team uses IAM Identity Center and has already configured a profile,
+  run `aws sso login --profile PROFILE`. If it is not configured, ask the
+  account owner for the SSO start URL and region before running
+  `aws configure sso --profile PROFILE`.
+- If the team uses browser-based console sign-in for the CLI and has granted
+  the required local-development sign-in permission, run
+  `aws login --region us-east-2`.
+
+Verify the selected identity locally with
+`aws sts get-caller-identity --region us-east-2`; do not share its output. For
+a named profile, add `--profile PROFILE` to the AWS commands below.
+
+Use an available local port such as `18080` (check it in PowerShell with
+`Get-NetTCPConnection -LocalPort 18080 -State Listen`). In Ubuntu WSL, replace
+the target with the current `vm-app` instance ID from the authorized account:
+
+```bash
+aws ssm start-session \
+  --target i-REPLACE_WITH_VM_APP_INSTANCE_ID \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["8080"],"localPortNumber":["18080"]}' \
+  --region us-east-2
+```
+
+Keep that terminal open and browse from Windows to
+`http://127.0.0.1:18080/`. Stop the forward by pressing `Ctrl+C` in the WSL
+terminal. This command opens a temporary tunnel only; it does not deploy,
+restart, or modify AWS resources. Do not run Terraform or Ansible as part of
+the presentation.

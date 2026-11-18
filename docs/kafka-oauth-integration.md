@@ -347,38 +347,42 @@ Checked on 2026-11-12 at 19:50 local time:
   `Token validation failed: Token type not set`. Strimzi requires JWT payload
   `typ` or `token_type` equal to `Bearer`; the Auth Server correction and
   claim assertion described above have been added but still need testing.
-- Héctor is testing a single listener with
-  `smarttraffic-kafka` as both the inter-broker OAuth client ID and the
-  listener's expected audience/resource ID. Application clients retain their
-  individual OAuth client IDs and must be configured in Auth Server to receive
-  `aud=smarttraffic-kafka`. The result of Héctor's test is pending; this is
-  not a validated integration.
-- Héctor reported `connections.max.reauth.ms=0`. Forced reauthentication on
-  token expiry is disabled and remains explicitly pending; no expiry
-  reauthentication test has been run.
-- This branch now accepts `AUTH_SSL_TRUSTSTORE_LOCATION`,
-  `AUTH_SSL_TRUSTSTORE_PASSWORD`, and `AUTH_SSL_TRUSTSTORE_TYPE`, mapping them
-  to Strimzi's `oauth.ssl.truststore.*` JAAS options. A focused unit test
-  verifies that these remain separate from Kafka's `ssl.truststore.*`
-  properties and that Auth Server truststore credentials are not placed in
-  the broker truststore settings.
-- Héctor's reported 5-unit/1-integration-test pass used an external OAuth
-  HTTPS truststore on his local setup. It has not been rerun against this
-  branch's new configuration from Steven's workspace.
-- No reachable broker address, Auth Server token/JWKS URLs, TLS trust material,
-  test client credentials, or provisioned test ACLs are available in this
-  workspace. No credentials, tokens, or certificates were requested or added.
-- Consequently, Steven cannot independently rerun the profile from this
-  machine. The current commit's authorized-client and rejection results still
-  require a run in Héctor's broker/Auth Server environment.
+- Héctor's reported `connections.max.reauth.ms=0` and the earlier statement
+  that this workspace could not run the broker profile describe prior
+  snapshots. The local verification below supersedes those statements for the
+  focused OAuth/ACL case; token-expiry reauthentication remains a separate
+  test.
 
-To unblock a reproducible run, Héctor needs to provide the non-secret runtime
-parameters: broker host and TLS client port, certificate host/SAN and the
-local truststore arrangement, Auth Server token and JWKS endpoints plus issuer,
-approved audience, ACL principal mapping/status, token lifetime, and
-`connections.max.reauth.ms`. Test credentials and certificate files must be
-injected locally from a protected source, never posted in the PR or committed.
-The host-side run must use the local-access Compose override, the approved
-`traffic_readings` topic and audience, and the authorized/ACL-denied test
-clients. The validly signed wrong-issuer/wrong-audience test tokens must be
-prepared for that test environment before the profile can run.
+### Latest isolated broker validation (2026-11-18)
+
+The focused OAuth/ACL integration was run against committed source revision
+`a9fe565ebfcdb2b2ba40ace49eeea5b467d34dfd` in a clean temporary copy. It used
+the command:
+
+```powershell
+mvn -B -ntp -pl shared/kafka-security -Pkafka-it `
+  -Dit.test=KafkaOAuthBrokerIT#brokerAllowsOnlyValidIssuerAudienceAndAcl verify
+```
+
+Surefire passed all 14 module tests; Failsafe passed the selected broker test
+(1 test, 0 failures, 0 errors). The test confirmed an allowed publish and
+rejection of a missing token, a malformed token, correctly signed tokens with
+the wrong issuer or audience, and a valid principal without `WRITE` on
+`traffic_readings`. The ACL-denied principal retained the cluster-level
+`IDEMPOTENT_WRITE` permission so the rejection exercised the topic ACL.
+
+The test used temporary Auth Server, signing keys, certificates, clients, and
+ACLs on an isolated Docker network with no published ports. The temporary
+Compose override supplied JVM trust for the test JWKS CA and added the
+controller certificate principal `User:CN=kafka` as a fixture superuser. These
+are test-only settings; verify the deployed broker's JWKS trust and controller
+principal separately before treating them as production configuration. The
+token-audit filter was disabled for this non-reauthentication case. No
+reauthentication tests were run in this execution; the separate manual
+reauthentication evidence above remains a prior run. Temporary containers,
+network, volume, keys, certificates, and credentials were removed afterward.
+
+This verifies the local Kafka OAuth/ACL path only. It is not a GitHub check,
+does not validate the AWS deployment, and does not establish that the deployed
+issuer, audience, listener, ACLs, JWKS trust, or controller principal match
+this fixture.

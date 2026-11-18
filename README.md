@@ -2,13 +2,17 @@
 
 Proyecto final del ejercicio 12 para las asignaturas de Sistemas Distribuidos, Sistemas Operativos y Programación Orientada a Objetos. SmartTraffic propone una arquitectura distribuida para simular lecturas de sensores de tráfico, calcular el nivel de congestión por zona, distribuir actualizaciones y alertas, responder consultas y conservar un histórico.
 
-> **Estado:** implementación parcial. El flujo local simulador → Kafka → Kafka Streams → RabbitMQ pasó una prueba end-to-end con brokers aislados. El backend y la interfaz del dashboard implementan RabbitMQ → WebSocket; `alert-dispatcher` y `query-client` implementan alertas por cambios de estado y consultas asíncronas correlacionadas. Estos tres tramos todavía requieren validación conjunta con brokers. Nombres de producción, VMs y reglas de red siguen pendientes. Terraform está protegido contra creación por defecto; no se han creado recursos AWS ni se ha confirmado costo cero.
+> **Estado verificado al 17 de noviembre de 2026:** la demo está desplegada en AWS y se comprobó el dashboard desde un portátil mediante un túnel SSM. En la misma sesión, los dos `query-client` recibieron respuestas para dos zonas, `alert-dispatcher` registró transiciones de estado y PostgreSQL mostró 39.930 lecturas, incluidas 597 en los diez minutos previos a la consulta. La última lectura observada fue `2026-11-17 14:22:43 UTC`; estos valores son una captura de esa validación, no métricas permanentes.
+>
+> Una inspección AWS de solo lectura confirmó una diferencia importante: cinco subnets están asociadas a la tabla `smarttraffic-private`, cuya ruta `0.0.0.0/0` va a un NAT Gateway público disponible; la subnet `smarttraffic-nat` tiene ruta a un Internet Gateway. Terraform describe otra topología (subnets de VM con ruta directa al Internet Gateway y sin NAT). No apliques Terraform hasta reconciliar el estado y el plan con AWS, proteger los datos y revisar los costos.
+>
+> La ejecución raíz de `mvn -B test` terminó con `BUILD SUCCESS`, cero fallos y cero errores; cinco casos que requieren servicios externos se omitieron en esa ejecución. La integración PostgreSQL de V1/V2 pasó por separado con dos casos en un contenedor local desechable; eso no valida AWS. Terraform no está reconciliado con el despliegue. En la consola, los IDs, CIDR y AZ de las cinco subnets de VM y la subnet NAT, las dos tablas de rutas, la ruta predeterminada al NAT y las asociaciones coinciden con el state local; esto solo verifica la parte de red. Un plan completo contra AWS, usando `terraform.tfvars.example`, terminó con **0 altas, 0 cambios y 68 destrucciones**: el ejemplo desactiva la creación mientras el state contiene recursos. El HCL también describe una red distinta. No se ejecutó `apply`; **no apliques Terraform** hasta reconciliar configuración, state, datos y costos. La revisión AWS confirmó cinco volúmenes raíz EBS cifrados de 30 GiB; en `vm-data`, `vm-core`, `vm-ingest` y `vm-auth` solo se observaron discos raíz XFS, sin los volúmenes de datos separados previstos para PostgreSQL, Kafka y RabbitMQ. En las cinco VM, `nftables` aplica `drop` por defecto y permite TCP 443 a destinos fuera del CIDR de la VPC. En `vm-data`, Kafka negoció TLS 1.3 pero OpenSSL no confió en la CA autofirmada; RabbitMQ confirmó `amqp/ssl` y PostgreSQL devolvió `ssl=off`. En `vm-auth`, TLS 1.3 también negoció con esa CA. Los truststores de los tres clientes Kafka inspeccionados son legibles y coinciden por huella con la CA presentada por Kafka y Auth Server; los logs recientes muestran publicaciones confirmadas por el simulador. Las CA PEM de RabbitMQ en el procesador y los cuatro clientes de `vm-app` también coinciden por huella con la raíz servida, aunque consultar el certificado no prueba conexiones AMQPS efectivas. Falta identificar el commit y confirmar por separado operaciones exitosas de los clientes de `vm-core` y `vm-app`. En `vm-app`, el listener `127.0.0.1:8080` responde HTTP; HTTPS/TLS falla con `wrong version number`. Las imágenes de los contenedores de `vm-app` no informan un `org.opencontainers.image.revision`, así que no identifican el commit desplegado. No presentes la infraestructura como reproducible desde cero hasta reconciliar Terraform y decidir el tratamiento de datos.
 
 ## Contexto y problema
 
 Una ciudad inteligente necesita recibir lecturas de tráfico de varios sensores, procesarlas continuamente y compartir el estado de cada zona con aplicaciones y servicios de alerta. SmartTraffic plantea ese flujo con mensajería distribuida, persistencia histórica y controles de seguridad entre servicios.
 
-El proyecto también aborda el despliegue en zonas de seguridad separadas. La arquitectura propuesta utiliza cinco máquinas virtuales (VMs), contenedores Docker y reglas de red de denegación por defecto, en lugar de una única red plana para todos los componentes.
+El proyecto despliega sus componentes en cinco zonas de seguridad, usando contenedores Docker y reglas de red de denegación por defecto en lugar de una única red plana.
 
 ## Objetivos
 
@@ -32,11 +36,11 @@ Diseñar e implementar progresivamente un sistema distribuido de monitoreo de tr
 - **Sistemas Operativos:** máquinas virtuales, Linux, Docker, aislamiento, reglas `nftables` y límites de recursos.
 - **Programación Orientada a Objetos:** Java, Spring Boot, SOLID, patrones de diseño, persistencia y pruebas.
 
-## Arquitectura propuesta
+## Arquitectura desplegada
 
-El despliegue se divide en cinco zonas. Cada VM ejecutará los contenedores correspondientes a su responsabilidad; no se propone una única red Docker plana que conecte todas las zonas.
+El despliegue se divide en cinco zonas. La configuración por VM está en `infra/vm-*/compose.yaml` y el dashboard se presentó por un túnel SSM, sin publicar su puerto al Internet. La tabla describe la distribución configurada; las IP, credenciales y certificados concretos se mantienen fuera del repositorio.
 
-| Zona | Componentes propuestos | Responsabilidad |
+| Zona | Componentes | Responsabilidad |
 |---|---|---|
 | `vm-auth` | `auth_server` | Emitir tokens JWT y publicar claves públicas mediante JWKS. |
 | `vm-data` | Kafka, RabbitMQ, PostgreSQL | Proveer mensajería y almacenamiento a los servicios autorizados. |
@@ -62,25 +66,25 @@ El sistema contempla siete microservicios y una interfaz web:
 ### Recorrido de los mensajes
 
 1. `traffic_sensor_simulator` genera lecturas y las publica en un tópico de Kafka.
-2. `traffic_density_processor` consume esas lecturas mediante Kafka Streams. La propuesta utiliza una KTable para mantener el estado del tráfico por zona; las claves, agregaciones y ventanas se definirán durante el diseño detallado.
-3. El procesador publica estados consolidados en el fanout exchange `traffic_updates` de RabbitMQ. Se contemplan colas independientes para el dashboard y el servicio de alertas, para que ambos reciban cada actualización. Los nombres `dashboard_updates_queue` y `alert_updates_queue` son provisionales y quedan pendientes de aprobación del equipo.
+2. `traffic_density_processor` consume esas lecturas mediante Kafka Streams, las agrupa por zona y mantiene agregados en ventanas; el estado publicado se conserva en stores de Kafka Streams.
+3. El procesador publica estados consolidados en el fanout exchange `traffic_updates` de RabbitMQ. El despliegue configura colas independientes para el dashboard y el servicio de alertas, para que ambos reciban cada actualización.
 4. `user_dashboard_backend` entrega las actualizaciones al cliente web. `alert_dispatcher` conserva la última actualización por zona, descarta marcas de tiempo antiguas y registra una alerta cuando cambia el estado, incluida la recuperación. Es una regla inicial de demostración, no una política de notificación aprobada.
 5. `traffic_archiver` consume las lecturas originales y las persiste en PostgreSQL.
 6. Cada instancia de `query_client` publica una consulta con zonas, `requestId`, `correlationId` y su cola en `replyTo`. `alert_dispatcher` responde desde su réplica local en el topic exchange `query_answers`, usando `instanceId` como clave de enrutamiento. El cliente valida la correlación y registra zonas sin estado disponible.
 
 ## Seguridad Zero Trust
 
-La arquitectura propone identidades propias para los servicios que se conectan a los brokers y privilegios mínimos por componente. `auth_server` utiliza JWT firmados con RS256 y publica claves públicas mediante JWKS. La matriz aprobada para el clúster Kafka local y las decisiones aún pendientes se documentan en la guía de integración; no constituyen aprobación de despliegue.
+El repositorio configura identidades de servicio, JWT firmados con RS256 y claves públicas mediante JWKS; los flujos funcionales de consulta, alertas y persistencia se observaron en AWS. Sin embargo, esa evidencia no demuestra que las políticas de autenticación y rechazo se hayan probado en AWS: las verificaciones de seguridad descritas abajo corresponden a código y fixtures locales.
 
-- **Kafka:** autenticación de clientes mediante SASL/OAUTHBEARER y autorización separada para operaciones sobre topics. La validación del token y la aplicación de ACL son responsabilidades diferentes. La configuración cliente aprobada para el clúster local y sus verificaciones pendientes están en [docs/kafka-oauth-integration.md](docs/kafka-oauth-integration.md).
-- **RabbitMQ:** plugin OAuth2 para autenticar conexiones y autorizar operaciones sobre exchanges y colas.
-- **Comunicaciones:** TLS y reglas `nftables` con denegación por defecto forman parte del diseño. Se deberá comprobar el tráfico de entrada, salida y reenvío, incluido el que atraviesa redes Docker.
+- **Kafka:** el cliente usa SASL_SSL/OAUTHBEARER; el fixture local configura validación JWT y ACL. Las pruebas locales incluyen renovación aceptada y rechazada y, en una ejecución aislada del 18 de noviembre de 2026, rechazo de token ausente o malformado, `issuer`/audiencia incorrectos y un principal válido sin permiso `WRITE` en `traffic_readings`. Estas pruebas son locales; no validan los controles en AWS.
+- **RabbitMQ:** el fixture local usa el plugin OAuth2 y comprueba rechazos por token ausente, expiración, audiencia y permisos insuficientes. Una prueba local aceptó un token firmado por una clave confiable con un `issuer` distinto; por ello, no se afirma que la validación de igualdad del `issuer` esté comprobada. No se encontró evidencia de estas pruebas en AWS.
+- **TLS y red:** el fixture Kafka usa TLS para clientes y mTLS en el listener del controlador. RabbitMQ valida TLS para JWKS y los clientes validan el certificado AMQPS, pero RabbitMQ no exige certificado cliente. La plantilla de `nftables` define políticas `drop` por defecto; antes de afirmar que el egreso es estrictamente de mínimo privilegio, confirma la excepción HTTPS temporal en la configuración efectiva de Ansible.
 
-Estas medidas son requisitos propuestos; su presencia en este README no significa que ya estén configuradas o verificadas.
+Las credenciales, claves y archivos de configuración de despliegue no se incluyen en el repositorio. La matriz de red y los parámetros operativos deben revisarse con los responsables de infraestructura y autenticación antes de presentar la configuración como una validación formal completa de Zero Trust.
 
 ## Diseño orientado a objetos
 
-La lógica de dominio se implementará con encapsulamiento e invariantes explícitas, dependencias inyectadas por constructor y abstracciones para brokers y persistencia.
+La lógica de dominio aplica encapsulamiento e invariantes explícitas, dependencias inyectadas por constructor y abstracciones para brokers y persistencia.
 
 - **Strategy:** intercambiar algoritmos de cálculo de densidad, como promedio simple y promedio ponderado en una ventana temporal.
 - **State:** representar las transiciones entre `DESPEJADA`, `MODERADA` y `CONGESTIONADA`.
@@ -90,23 +94,23 @@ La lógica de dominio se implementará con encapsulamiento e invariantes explíc
 
 ## Persistencia y pruebas
 
-PostgreSQL almacenará el histórico de lecturas y los registros de auditoría. El acceso desde la aplicación se organizará mediante interfaces y adaptadores con Spring Data JPA / Hibernate, procurando conservar el encapsulamiento del dominio. La estrategia para proteger el histórico contra modificaciones se definirá durante el diseño de persistencia.
+PostgreSQL almacena el histórico mediante Spring Data JPA / Hibernate. La migración local V2 agrega `traffic_reading_audit` para registrar cada inserción efectiva nueva y triggers que rechazan cambios, borrados y truncados del histórico y de la auditoría; las pruebas PostgreSQL comprueban también la idempotencia. No se hace backfill de lecturas existentes. Como el rol de aplicación sigue siendo propietario, un usuario privilegiado puede modificar o deshabilitar esos triggers: no se afirma inmutabilidad frente al dueño o administrador de la base. Esta migración local aún no se ha aplicado ni validado en AWS.
 
-JUnit 5 y Mockito se utilizarán para pruebas unitarias con Arrange, Act, Assert. Las pruebas de dominio deberán ejecutarse en memoria, sin iniciar Spring Boot, contenedores, brokers ni conexiones de red; las pruebas de integración se planificarán por separado.
+JUnit 5 y Mockito se utilizan para pruebas unitarias con Arrange, Act, Assert. Las pruebas de dominio se ejecutan en memoria; las pruebas de integración están separadas y algunas se omiten en la ejecución Maven normal porque requieren servicios externos.
 
 ## Contenedores e infraestructura
 
-Se propone Docker para ejecutar los componentes dentro de cada VM y Dockerfiles multietapa para compilar con Maven/JDK y ejecutar con una imagen JRE ligera. Los contenedores de aplicación se ejecutarán con un usuario no privilegiado. Los límites de CPU y memoria, así como las réplicas previstas, se configurarán según las capacidades reales de Docker Compose y se verificarán en ejecución; declararlos en archivos no será suficiente para afirmar que se aplican.
+Docker Compose separa los servicios por VM y el Dockerfile compartido para aplicaciones Java usa etapas de compilación y ejecución, una imagen JRE y un usuario no privilegiado. `docker inspect` confirmó límites efectivos de CPU/memoria en los 11 contenedores; véase [infra/aws/README.md](infra/aws/README.md). Las muestras de `docker stats` son instantáneas y no una prueba de carga. `vm-app` define dos réplicas fijas de `query-client` como servicios independientes, cada una con su identidad y cola de respuesta; no se usa `deploy.replicas`, que no permite asignar identidades y colas distintas a cada instancia en este despliegue.
 
-Vagrant y/o Ansible se evaluarán para aprovisionar las cinco VMs. Las configuraciones de `nftables`, redes y despliegue aún están pendientes.
+Ansible contiene el aprovisionamiento y despliegue por rol para las cinco VMs. Terraform permanece en revisión: no apliques cambios hasta reconciliar el plan con los recursos existentes y definir la recuperación/migración de los datos.
 
-## Tecnologías previstas
+## Tecnologías utilizadas
 
-Java 17 o superior, Spring Boot, Maven, Apache Kafka, Kafka Streams, RabbitMQ, PostgreSQL, Spring Data JPA / Hibernate, JWT, JWKS, OAuth2, SASL/OAUTHBEARER, TLS, Docker, Vagrant y/o Ansible, `nftables`, JUnit 5 y Mockito.
+Java 17 o superior, Spring Boot, Maven, Apache Kafka, Kafka Streams, RabbitMQ, PostgreSQL, Spring Data JPA / Hibernate, JWT, JWKS, OAuth2, SASL/OAUTHBEARER, TLS, Docker, Ansible, `nftables`, JUnit 5 y Mockito.
 
 ## Diagrama de arquitectura
 
-El siguiente diagrama representa la arquitectura propuesta, no un despliegue actualmente operativo:
+El siguiente diagrama representa la arquitectura lógica del despliegue. Omite las direcciones, credenciales y certificados concretos:
 
 ```mermaid
 flowchart LR
@@ -188,24 +192,26 @@ flowchart LR
 ## Equipo
 
 - **Sebastián Rosero:** coordinación e integración, dominio Java, POO y persistencia.
-- **Héctor:** infraestructura, Vagrant/Ansible, VMs, Docker y `nftables`.
+- **Héctor:** infraestructura, Ansible, VMs, Docker y `nftables`.
 - **Steven:** autenticación, JWT/JWKS y seguridad de Kafka y RabbitMQ.
 
 Las responsabilidades son iniciales y no reemplazan la revisión cruzada: el equipo trabajará conjuntamente en las integraciones, pruebas y demostración.
 
-## Estado y etapas previstas
+## Estado de validación y pendientes de entrega
 
-El simulador publica lecturas JSON en Kafka con la configuración OAuth compartida. La topología del procesador cuenta con pruebas `TopologyTestDriver` y su flujo con el simulador y RabbitMQ se validó localmente con brokers aislados; el resultado y sus límites están documentados en el [README del procesador](services/traffic-density-processor/README.md). La validación manual de reautenticación Kafka no equivale a una prueba end-to-end de todos los servicios. El archivador tiene pruebas automatizadas, pero aún no se ha validado contra un broker y una base de datos reales. El backend y la interfaz del dashboard, el dispatcher y el cliente de consultas ya tienen implementación y pruebas unitarias; la integración RabbitMQ/WebSocket y el flujo de consultas/alertas no se han probado juntos con broker. Sus colas y permisos productivos siguen pendientes (ver [README del backend](services/user-dashboard-backend/README.md), [README del dispatcher](services/alert-dispatcher/README.md) y [README del cliente](services/query-client/README.md)). Las VMs y reglas `nftables` siguen pendientes.
+### Comprobado
 
-La prueba de integración del archivador con PostgreSQL, migración Flyway y validación de esquema ya está preparada, pero se omite por defecto y todavía no se ha ejecutado contra una base real; sus instrucciones están en el [README del archivador](services/traffic-archiver/README.md).
+- La demo del dashboard se abrió desde el portátil mediante SSM y mostró actualizaciones en vivo de dos zonas.
+- Los dos clientes de consulta registraron respuestas para dos zonas; el dispatcher registró transiciones entre `DESPEJADA`, `MODERADA` y `CONGESTIONADA`.
+- Una consulta de solo lectura a `traffic_readings` mostró 39.930 filas, 597 con `occurred_at` en los diez minutos previos y una última lectura de `2026-11-17 14:22:43 UTC`.
+- El 17 de noviembre de 2026 se verificó desde el portátil el acceso al dashboard mediante un túnel SSM local; el backend indicó conexión y la marca de última medición avanzó mientras la página permanecía abierta. Esto valida esa sesión de presentación, no la reproducibilidad completa de AWS ni todos los controles de seguridad.
+- `mvn -B test` ejecutado desde la raíz terminó con `BUILD SUCCESS`, cero fallos y cero errores. Se omitieron cinco casos que requieren servicios externos; consulta los README de los módulos para sus condiciones. La integración PostgreSQL con V1/V2 pasó por separado con dos casos en un contenedor local desechable.
 
-Etapas pendientes:
+### Pendiente antes de una entrega formal
 
-1. Acordar los nombres productivos, reglas de alertas, scopes, puertos y requisitos de recursos.
-2. Preparar y probar el aprovisionamiento y la conectividad de las cinco VMs.
-3. Validar juntos los flujos de dashboard, alertas, consultas y archivado con brokers y base de datos.
-4. Completar Compose por VM, reglas `nftables`, monitoreo, límites de recursos y la revisión de seguridad.
-5. Confirmar con AWS/profesor la elegibilidad y cobertura real sin cargos antes de desplegar; Terraform permanece desactivado.
-6. Completar la documentación final y preparar la sustentación.
-
-Las etapas y tecnologías concretas podrán ajustarse tras validar la compatibilidad, los recursos disponibles y los requisitos del curso.
+1. Revisar la [matriz de red](docs/network-matrix.md) y las guías de despliegue actualizadas con la evidencia de la demo SSM; confirmar con los responsables los puertos, flujos y políticas efectivas que no se inspeccionaron.
+2. Comparar el código con cada requisito del enunciado. Los siete microservicios usan Spring Boot (`auth-server`, archivador, backend del dashboard, simulador, procesador, `alert-dispatcher` y `query-client`). El código local incorpora auditoría de nuevas lecturas y bloqueos por trigger, sujetos al límite del rol propietario; `vm-app` define dos instancias fijas de `query-client` con identidades y colas distintas. La igualdad del `issuer` sigue sin estar garantizada por el backend OAuth2 estándar de RabbitMQ 4.3.7.
+3. Decidir el alcance aprobado para la excepción de egreso HTTPS observada en las cinco VM.
+4. Reconciliar Terraform con el estado AWS observado: cinco grupos de instancias, reglas por rol, cinco volúmenes raíz y ausencia de volúmenes separados en `vm-data`. Decidir, con respaldo y plan de recuperación, si se crean y migran los datos a los volúmenes EBS dedicados. No aplicar el plan mencionado en un reporte anterior sin validarlo contra el state y el estado AWS actuales.
+5. Identificar el commit desplegado: las imágenes locales de `vm-app` no incluyen la etiqueta OCI `org.opencontainers.image.revision`. Revisar el cambio local de `.terraform.lock.hcl`, dejar el árbol de trabajo intencional y publicar en GitHub la versión que se presentará.
+6. Ensayar una demostración de máximo 15 minutos desde el portátil, con el túnel SSM temporal, que explique decisiones de arquitectura, código y evidencia validada sin afirmar controles que aún no se hayan verificado.

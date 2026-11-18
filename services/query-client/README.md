@@ -1,5 +1,8 @@
 # Query client
 
+The service starts as a Spring Boot application and manages its RabbitMQ
+client lifecycle through the application context.
+
 `query-client` periodically sends asynchronous queries for one or more zones.
 Each request gets a UUID `requestId`, uses it as the AMQP `correlationId`, sets
 `replyTo` to its provisioned response queue, and carries the instance ID used

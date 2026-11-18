@@ -80,14 +80,24 @@ credentials; the broker had no host-published ports:
 - A connection without an OAuth token was rejected.
 - On the 2026-11-15 rerun at commit `270efc1ccc27ccb9992ba65539faf70dc3902b24`,
   a token signed by the trusted test key with a different `iss` was accepted.
-  Treat this as an observed risk for this fixture/configuration and run only;
-  it does not establish that every RabbitMQ/plugin configuration behaves the
-  same way or that issuer equality is validated.
+  The pinned RabbitMQ 4.3.7 OAuth2 backend verifies the JWT signature and
+  configured algorithm, then selects the resource server from `aud`; its
+  token-validation path does not compare `iss` with an expected issuer. The
+  fixture does not configure issuer equality, and adding an issuer/discovery
+  setting alone is not evidence that the AMQP backend enforces that claim.
+  See the pinned
+  [`rabbit_auth_backend_oauth2`](https://github.com/rabbitmq/rabbitmq-server/blob/v4.3.7/deps/rabbitmq_auth_backend_oauth2/src/rabbit_auth_backend_oauth2.erl)
+  and
+  [`uaa_jwt_jwt`](https://github.com/rabbitmq/rabbitmq-server/blob/v4.3.7/deps/rabbitmq_auth_backend_oauth2/src/uaa_jwt_jwt.erl)
+  validation paths.
 
-This case is a residual limitation, not an equivalent substitute for issuer
-validation and not full RFC 9068 validation. Do not log or persist JWTs or
-secrets. These results validate only the isolated test fixture, not a
-production deployment.
+Issuer equality remains required by the project's intended trust model but is
+not enforced by this stock fixture backend; it is pending a separately
+implemented and broker-tested backend that rejects a trusted-key token with a
+different issuer. The existing case is characterization of the observed
+acceptance, not a negative rejection test. This is not full RFC 9068 validation.
+Do not log or persist JWTs or secrets. These results validate only the
+isolated test fixture, not a production deployment.
 
 ## Production decisions still pending
 

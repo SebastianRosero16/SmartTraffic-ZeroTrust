@@ -6,29 +6,51 @@ import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ExecutionException;
 import org.apache.kafka.clients.producer.RecordMetadata;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
 
-public final class TrafficSensorSimulatorApplication {
-    private TrafficSensorSimulatorApplication() {
+@SpringBootApplication
+public class TrafficSensorSimulatorApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(TrafficSensorSimulatorApplication.class, args);
     }
 
-    public static void main(String[] args) throws ExecutionException {
-        Map<String, String> environment = System.getenv();
-        TrafficSensorSimulatorProperties properties =
-                TrafficSensorSimulatorProperties.fromEnvironment(environment);
-        TrafficReadingGenerator generator = new TrafficReadingGenerator(
+    @Bean
+    TrafficSensorSimulatorProperties simulatorProperties() {
+        return TrafficSensorSimulatorProperties.fromEnvironment(System.getenv());
+    }
+
+    @Bean
+    TrafficReadingGenerator trafficReadingGenerator(TrafficSensorSimulatorProperties properties) {
+        return new TrafficReadingGenerator(
                 properties.sensors(),
                 properties.zones(),
                 properties.minimumVehicles(),
                 properties.maximumVehicles(),
                 Clock.systemUTC(),
                 new Random());
+    }
 
-        try (KafkaTrafficReadingPublisher publisher =
-                KafkaTrafficReadingPublisher.connect(properties.topic(), environment)) {
-            publishContinuously(generator, publisher, properties);
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-        }
+    @Bean(destroyMethod = "close")
+    KafkaTrafficReadingPublisher kafkaTrafficReadingPublisher(
+            TrafficSensorSimulatorProperties properties) {
+        return KafkaTrafficReadingPublisher.connect(properties.topic(), System.getenv());
+    }
+
+    @Bean
+    ApplicationRunner publishTrafficReadings(
+            TrafficReadingGenerator generator,
+            KafkaTrafficReadingPublisher publisher,
+            TrafficSensorSimulatorProperties properties) {
+        return args -> {
+            try {
+                publishContinuously(generator, publisher, properties);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+        };
     }
 
     private static void publishContinuously(

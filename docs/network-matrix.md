@@ -23,35 +23,140 @@ probado. En particular, el uso de Kafka/RabbitMQ y sus mecanismos de
 autenticación indicados abajo es obligatorio; nombres y parámetros concretos
 solo lo son si el enunciado los fija.
 
-**Estado de revisión:** Steven aprobó la precisión del texto compartido para
-Auth, Kafka y RabbitMQ; Héctor aprobó los flujos lógicos, pero no la matriz
-completa como base de producción. Para la demostración se decidió US East
-(Ohio), `us-east-2`, una AZ, cinco subredes con IPv4 públicas dinámicas,
-administración por Session Manager y port forwarding de Session Manager para el
-dashboard, sin SSH ni ingress público. Siguen pendientes los CIDR, la AZ
-disponible para la cuenta, la identidad IAM del portátil, el inventario y los
-listeners/puertos de producción.
+**Estado de revisión al 17 de noviembre de 2026:** la demostración se abrió
+desde el portátil mediante Session Manager; el túnel llegó al listener local
+del dashboard en `vm-app` por el puerto remoto `8080`, el backend informó
+conexión y la marca de última medición avanzó. El README registra además
+respuestas de consultas y transiciones de alertas observadas durante esa
+demostración. Esto es evidencia de ejecución funcional en esa sesión, no prueba
+de todos los controles de seguridad ni identifica el commit desplegado.
+Siguen pendientes la aprobación de CIDR, listeners y flujos productivos, así
+como reconciliar el estado AWS con Terraform. La inspección de `nftables` en
+las cinco VM encontró política `drop` en input, forward y output, excepciones
+de salida por rol y TCP 443 hacia destinos fuera del CIDR de la VPC.
 
-**Alcance actual de Terraform:** `network_rules` está vacío por defecto. La
-única regla de salida automática es TCP 443 para SSM, imágenes y actualizaciones;
-no hay reglas de ingress ni reglas de aplicación entre roles. Por tanto, la
-infraestructura actual todavía no habilita comunicación de aplicación entre
-las cinco VM. Se deberán añadir las reglas de ingress y egress para Auth,
-Kafka, RabbitMQ, PostgreSQL y el dashboard cuando se confirmen sus listeners,
-puertos y flujos iniciadores. Las filas de esta matriz describen requisitos
-lógicos; no significan que esos flujos ya estén habilitados.
+**Alcance de Terraform y estado vivo:** en el código, `network_rules` está
+vacío por defecto y la salida predeterminada de Security Groups es TCP 443.
+La revisión posterior encontró reglas activas por rol que no figuran como
+configuración predeterminada: `vm-auth` recibe HTTPS TCP 443 desde los otros
+grupos; `vm-data` recibe PostgreSQL 5432, RabbitMQ 5672 y Kafka 9092 desde
+grupos específicos; `vm-app` no tiene entrada pública y usa el túnel SSM.
+`vm-core` e `vm-ingest` no tienen reglas de entrada. Todos los grupos revisados
+permiten HTTPS 443 temporal a `0.0.0.0/0`. Esto es el estado observado en
+Security Groups, no una configuración formalmente confirmada en el repositorio.
+No apliques un plan para reconciliarlo sin revisar state y recuperación de datos.
+
+La revisión de solo lectura de rutas del 17 de noviembre de 2026 encontró una
+tabla `smarttraffic-private` asociada a cinco subnets, con la ruta
+`0.0.0.0/0` hacia un NAT Gateway público en estado `Available`. La tabla
+`smarttraffic-public` está asociada a `smarttraffic-nat` y envía
+`0.0.0.0/0` al Internet Gateway. El VPC observado usa `10.42.0.0/16`. Esta
+topología difiere del diseño Terraform, que envía directamente las subnets VM
+al Internet Gateway y no declara un NAT Gateway; no se debe aplicar sin
+reconciliar el estado y revisar costos y datos.
+
+La inspección actual de egreso confirmó TCP 443 a `0.0.0.0/0` en los cinco
+Security Groups, además de DNS TCP/UDP hacia `10.42.0.2/32`. Los flujos
+adicionales observados son: `vm-data` → Auth 443; `vm-ingest` → Auth 443 y
+`vm-data` 9092; `vm-core` → Auth 443 y `vm-data` 9092/5672/5432; `vm-app` →
+Auth 443 y `vm-data` 5672. El egreso HTTPS global aparece descrito como
+temporal; sigue siendo un permiso amplio, no una política por destino.
+
+**Almacenamiento observado:** AWS contiene cinco volúmenes raíz EBS cifrados de
+30 GiB, uno adjunto a cada VM. En `vm-data` el único disco observado es el
+volumen raíz XFS de 30 GiB; no aparece un volumen separado para
+PostgreSQL, Kafka o RabbitMQ, por lo que la configuración de datos dedicada
+prevista en Terraform/Ansible no se observó como adjunta a esa instancia. No
+hay todavía evidencia de un cutover de datos a `/srv/smarttraffic/{...}`.
+
+**`vm-app` observado por SSM:** el dashboard escucha solo en
+`127.0.0.1:8080`; los contenedores del dashboard, `alert-dispatcher` y dos
+`query-client` estaban activos. Las imágenes usan etiquetas locales y no
+incluyen `org.opencontainers.image.revision`; sus image IDs no se han
+correlacionado con el checkout, por lo que el commit desplegado sigue sin
+identificarse. Un `curl` local por HTTP devolvió `302` hacia
+`http://127.0.0.1:8080/dashboard.html`; la prueba HTTPS y el handshake TLS
+fallaron con `wrong version number`, lo que confirma que el listener 8080 no
+negocia TLS directamente. El listener SSH visible en el host no equivale a
+acceso de red: el Security Group de `vm-app` observado no tiene reglas de
+entrada. En los cuatro contenedores de aplicación, el certificado PEM de CA
+configurado para RabbitMQ tiene huella SHA-256
+`58:99:8C:58:B0:66:C4:33:A0:18:81:49:85:39:64:4C:FD:5A:D0:2C:27:24:98:F5:22:7A:9C:C9:59:78:F9:AA`,
+igual a la raíz presentada por el servidor. `keytool` obtuvo la cadena del
+servidor en el destino configurado; el certificado hoja incluye SAN para
+`10.42.2.7`, `rabbitmq`, `vm-data` y `localhost`. Esto confirma la presencia
+de la CA y los nombres en el certificado, pero no una conexión AMQPS funcional
+ni la validación efectiva de CA/hostname por cada cliente.
+
+**`vm-data` observado por SSM:** `ss` mostró listeners de Kafka en 9092 y
+9093 (este último en loopback), RabbitMQ en 5672 y PostgreSQL en 5432. Los
+contenedores Kafka, RabbitMQ y PostgreSQL estaban activos. El ruleset
+`nftables` limita la entrada a puertos 9092, 5672 y 5432 desde direcciones
+privadas específicas y limita los flujos salientes entre servicios; también
+permite HTTPS a destinos fuera del CIDR de la VPC. El archivo versionado
+`rabbitmq-production.conf` configura `listeners.tcp = none` y un listener
+SSL en 5672; `rabbitmq-diagnostics listeners` confirmó `amqp/ssl` en ese
+puerto. En PostgreSQL, `SHOW ssl` devolvió `off`. La negociación TLS de Kafka
+se completó en TLS 1.3 en 9092; la verificación de confianza de OpenSSL
+reportó una cadena autofirmada (`CN=SmartTraffic-Demo-CA`). Esto confirma el
+cifrado del canal, no que los clientes validen correctamente la CA/hostname
+ni que la autenticación Kafka SASL funcione.
+
+**`vm-core` observado por SSM:** `ss` no mostró listeners de aplicación en el
+host; estaban activos `traffic-archiver` y `traffic-density-processor`. El
+firewall usa política `drop` en las tres cadenas, permite las conexiones
+salientes necesarias a Kafka 9092, RabbitMQ 5672, PostgreSQL 5432 y Auth Server
+443, además de HTTPS a destinos fuera del CIDR de la VPC. Solo se observó el
+disco raíz XFS de 30 GiB; las rutas `buildkit-mount` corresponden al mismo
+dispositivo. Los dos contenedores tienen truststores PKCS12 de Kafka y Auth
+Server con la CA `SmartTraffic-Demo-CA`, cuya huella coincide con la CA servida
+por ambos endpoints. `keytool` consultó los destinos configurados
+(`10.42.2.7:9092` y `10.42.1.201`); los certificados incluyen SAN para esas
+direcciones. La configuración local valida hostname, pero aún no se confirmó
+por separado una operación exitosa de cada cliente ni el commit de las imágenes.
+En `traffic-density-processor`, las CA PEM de RabbitMQ y Auth Server también
+coinciden por huella con las cadenas servidas; el SAN del certificado de
+RabbitMQ incluye el destino configurado y el código local habilita validación
+de hostname. La conexión AMQPS efectiva de este cliente no se confirmó por
+separado.
+
+**`vm-ingest` observado por SSM:** `ss` no mostró listeners de aplicación en el
+host; estaba activo `traffic-sensor-simulator`. El firewall usa política
+`drop` en input/forward/output y permite salida a Kafka 9092 y Auth Server 443,
+además de HTTPS a destinos fuera del CIDR de la VPC. Solo se observó el disco
+raíz XFS de 30 GiB; las rutas `buildkit-mount` corresponden al mismo
+dispositivo. Dentro del contenedor, los truststores PKCS12 de Kafka y Auth
+Server existen, son legibles y cada uno contiene una entrada `trustedCertEntry`
+para `CN=SmartTraffic-Demo-CA`, con la misma huella SHA-256. `keytool
+-printcert -sslserver`, ejecutado con los destinos configurados, presentó
+cadenas cuya CA tiene exactamente esa misma huella; los certificados de hoja
+incluyen SAN para las direcciones privadas observadas. Los logs de los últimos
+cinco minutos mostraron publicaciones confirmadas en Kafka y ningún error
+TLS/SASL de los patrones consultados, lo que confirma una ruta de publicación
+funcional para el simulador. El commit desplegado no está identificado; las
+operaciones de los clientes de `vm-core` aún no se confirmaron por separado.
+
+**`vm-auth` observado por SSM:** Java escucha en `*:443` y el contenedor
+`auth-server` estaba activo. El firewall limita la entrada a 443 desde
+direcciones privadas específicas y permite HTTPS saliente a destinos fuera
+del CIDR de la VPC. Una conexión local con OpenSSL negoció TLS 1.3, pero la
+verificación predeterminada rechazó la cadena autofirmada
+(`CN=SmartTraffic-Demo-CA`; certificado del peer `CN=10.42.1.201`). El
+certificado incluye SAN para `10.42.1.201` y `vm-auth`. La CA coincide con los
+truststores Auth revisados en los tres clientes Kafka y con el archivo PEM Auth
+del `traffic-density-processor`; esto verifica material de confianza, no una
+solicitud de token exitosa para cada cliente. Solo se observó el disco raíz XFS
+de 30 GiB.
 
 ## Disponibilidad de los servicios
 
-Al verificar el HEAD remoto, `develop` apunta a
-`70f2266b2d7e3ff9a981837a492a9946f6032502`. Esa base publicada no incluye
-`alert-dispatcher` ni `query-client`; Steven confirmó que tampoco están en su
-checkout limpio de esa base. Sus directorios y código aparecen como cambios
-locales sin seguimiento en el checkout de Sebastián. Por ello, los flujos de
-alertas y consultas describen trabajo local pendiente de revisión/publicación:
-no están disponibles al clonar `develop` ni se han validado con un broker. Las
-pruebas unitarias existentes en esa copia local no se ejecutaron durante esta
-revisión. Actualizar este estado cuando esos cambios se publiquen y revisen.
+El checkout actual contiene cambios locales en `alert-dispatcher` y
+`query-client` que aún no están publicados en un commit. La demostración AWS
+del 17 de noviembre mostró alertas y respuestas de consulta, pero no se
+identificó el commit desplegado ni se comparó con este checkout. Por tanto,
+separa la evidencia de ejecución de la publicación/reproducibilidad del código:
+antes de afirmar que un clon limpio reproduce esa demo, publica y valida el
+commit que se presentará.
 
 ## Flujos de aplicación
 
@@ -62,13 +167,13 @@ revisión. Actualizar este estado cuando esos cambios se publiquen y revisen.
 | Kafka → archivador | `traffic_archiver` abre conexión hacia Kafka en `vm-data`. | Lecturas originales: Kafka → archivador. | Kafka con SASL_SSL/OAUTHBEARER; puerto por definir. | Consumir lecturas en paralelo para archivarlas. | Adaptador en el checkout; grupo/ACL, identidad, IP, listener y puerto de producción pendientes. |
 | Archivador → PostgreSQL | `traffic_archiver` abre conexión hacia PostgreSQL en `vm-data`. | Escrituras históricas: archivador → PostgreSQL. | PostgreSQL con Spring Data JPA/Hibernate; puerto por definir. | Guardar lecturas históricas y auditoría según el esquema aprobado. | PostgreSQL y Spring Data JPA/Hibernate: requisitos; esquema, credenciales, IP y puerto: pendientes. |
 | Procesador → RabbitMQ | `traffic_density_processor` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: procesador → exchange `traffic_updates`. | RabbitMQ con `rabbitmq_auth_backend_oauth2` por AMQPS; puerto por definir. | Publicar estados calculados para consumidores independientes. | Publicador OAuth2/AMQPS en el checkout; requiere permiso de escritura al exchange. Topología/ACL, IP y puerto de producción pendientes; la prueba aislada no define producción. |
-| RabbitMQ → backend del dashboard | `user_dashboard_backend` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → backend, desde `dashboard_updates_queue` por defecto. | RabbitMQ con `rabbitmq_auth_backend_oauth2`; AMQPS configurado por el cliente. | Entregar actualizaciones para presentación. | Consumidor OAuth2/AMQPS implementado; la cola debe existir y estar enlazada antes del arranque. El nombre por defecto, permisos de lectura, IP, puerto y validación con broker siguen pendientes. |
-| RabbitMQ → dispatcher de alertas | El consumidor `alert_dispatcher` abriría conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → dispatcher, desde una cola de alertas. | Diseño OAuth2/AMQPS; puerto por definir. | Actualizar la réplica local y registrar transiciones como alertas. | No existe en la base publicada ni en el checkout limpio de Steven; solo está como código local de Sebastián. No está publicado ni validado con broker. |
-| Backend → dashboard web | El navegador que carga `dashboard.html` abre la conexión WebSocket hacia `user_dashboard_backend`. | Actualizaciones: backend → navegador. | WebSocket same-origin en `/ws/traffic`; `ws` o `wss` según el esquema HTTP del backend. | Presentar tráfico en tiempo real. | Backend e interfaz implementados; endpoint provisional. Puerto expuesto, proxy TLS, reglas de red y validación end-to-end pendientes. |
-| Cliente de consulta → RabbitMQ | Cada cliente `query_client` abriría conexión hacia RabbitMQ en `vm-data`. | Solicitud: cliente → cola de solicitudes; incluye zonas, `requestId`, `correlationId`, `instanceId` y `replyTo`. | Diseño OAuth2/AMQPS; puerto por definir. | Enviar consultas asíncronas y esperar respuestas. | No existe en la base publicada ni en el checkout limpio de Steven; solo está como código local de Sebastián. No está publicado ni validado con broker. |
-| RabbitMQ → dispatcher de consultas | El consumidor `alert_dispatcher` abriría conexión hacia RabbitMQ en `vm-data`. | Solicitud: RabbitMQ → dispatcher, desde la cola de solicitudes. | Diseño OAuth2/AMQPS; puerto por definir. | Entregar consulta para responder desde la réplica local. | Flujo de arquitectura/código local no publicado; cola, permisos y pruebas con broker pendientes. |
-| Dispatcher → RabbitMQ | `alert_dispatcher` abriría conexión hacia RabbitMQ en `vm-data`. | Respuesta: dispatcher → exchange de respuestas, con `correlationId` y routing key de instancia. | Diseño OAuth2/AMQPS; puerto por definir. | Publicar la respuesta confirmada para una instancia. | Flujo de arquitectura/código local no publicado; exchange, bindings, permisos y pruebas con broker pendientes. |
-| RabbitMQ → cliente de consulta | Cada cliente `query_client` abriría conexión hacia RabbitMQ en `vm-data`. | Respuesta: RabbitMQ → cola propia de respuesta → cliente. | Diseño OAuth2/AMQPS; puerto por definir. | Entregar y correlacionar respuestas por instancia. | Flujo de arquitectura/código local no publicado; cola, binding, permisos y pruebas con broker pendientes. |
+| RabbitMQ → backend del dashboard | `user_dashboard_backend` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → backend, desde `dashboard_updates_queue` por defecto. | RabbitMQ con `rabbitmq_auth_backend_oauth2`; AMQPS configurado por el cliente. | Entregar actualizaciones para presentación. | La demo AWS mostró el dashboard conectado y con mediciones en vivo. No se verificaron la cola, ACL, listener ni el commit desplegado; la ejecución no sustituye esa revisión. |
+| RabbitMQ → dispatcher de alertas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → dispatcher, desde una cola de alertas. | Diseño OAuth2/AMQPS; puerto productivo por confirmar. | Actualizar la réplica local y registrar transiciones como alertas. | La demo AWS mostró transiciones de alertas (ver README). El cambio local aún no está publicado y no se identificó el commit desplegado ni se revisó la política de autorización efectiva. |
+| Backend → dashboard web | El navegador que carga `dashboard.html` abre la conexión WebSocket hacia `user_dashboard_backend`. | Actualizaciones: backend → navegador. | WebSocket same-origin en `/ws/traffic`; `ws` o `wss` según el esquema HTTP del backend. | Presentar tráfico en tiempo real. | Verificado en la demo AWS por el túnel SSM: el navegador mostró conexión y mediciones que avanzaban. El puerto remoto observado fue `8080`. Se inspeccionaron Security Groups y `nftables`; `vm-app` no tenía ingress y la cadena input de `nftables` aplica `drop` por defecto. No se probó exposición pública. |
+| Cliente de consulta → RabbitMQ | Cada cliente `query_client` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: cliente → cola de solicitudes; incluye zonas, `requestId`, `correlationId`, `instanceId` y `replyTo`. | Diseño OAuth2/AMQPS; puerto productivo por confirmar. | Enviar consultas asíncronas y esperar respuestas. | La demo AWS mostró respuestas de consulta. El código local aún no está publicado; el commit desplegado, la cola y la autorización efectiva no se verificaron. |
+| RabbitMQ → dispatcher de consultas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: RabbitMQ → dispatcher, desde la cola de solicitudes. | Diseño OAuth2/AMQPS; puerto productivo por confirmar. | Entregar consulta para responder desde la réplica local. | Las respuestas observadas en la demo indican que el flujo funcional operó; no se identificó el commit desplegado ni se revisaron cola y permisos efectivos. |
+| Dispatcher → RabbitMQ | `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Respuesta: dispatcher → exchange de respuestas, con `correlationId` y routing key de instancia. | Diseño OAuth2/AMQPS; puerto productivo por confirmar. | Publicar la respuesta confirmada para una instancia. | Las respuestas observadas en la demo indican que el flujo funcional operó; el exchange, bindings y permisos efectivos no se revisaron. |
+| RabbitMQ → cliente de consulta | Cada cliente `query_client` abre conexión hacia RabbitMQ en `vm-data`. | Respuesta: RabbitMQ → cola propia de respuesta → cliente. | Diseño OAuth2/AMQPS; puerto productivo por confirmar. | Entregar y correlacionar respuestas por instancia. | La demo AWS mostró respuestas a los clientes; no se identificó el commit desplegado ni se verificaron la cola, el binding y los permisos efectivos. |
 
 ## Inventario de endpoints y puertos observados
 
@@ -79,12 +184,12 @@ de producción.
 
 | Servicio | Interfaz configurada | Puerto de producción | Evidencia y límite |
 |---|---|---|---|
-| Kafka | Clientes configuran `KAFKA_BOOTSTRAP_SERVERS` y usan SASL_SSL/OAUTHBEARER; validan TLS del broker. El truststore del broker es distinto al truststore HTTPS de Auth Server. | Pendiente; listener, nombre anunciado, destino alcanzable, CA y SAN requieren acuerdo. | El fixture parametriza `CLIENT_PORT` y `CONTROLLER_PORT` desde `.env`, no publica puertos por defecto y mantiene el controller listener fuera del alcance de clientes. `kafka:<CLIENT_PORT>`, `localhost:9093`, `dummy:9092` y el override de host loopback son solo pruebas/desarrollo. |
-| Auth Server — token | Clientes solicitan token con OAuth `client_credentials`/`client_secret_basic` a `AUTH_TOKEN_ENDPOINT_URI` por HTTPS; la respuesta vuelve en esa misma conexión. | Pendiente en producción: host, puerto, certificado/CA y perfiles de audiencia/issuer. | El código documenta `/oauth2/token`; el Auth Server actual no selecciona una audiencia distinta por broker para cada solicitud. Los endpoints de fixtures y pruebas no son destinos productivos. |
+| Kafka | Clientes configuran `KAFKA_BOOTSTRAP_SERVERS` y usan SASL_SSL/OAUTHBEARER; el código habilita validación de hostname HTTPS. El truststore Kafka es distinto al truststore HTTPS de Auth Server. | `9092` observado en la interfaz del host; controlador `9093` observado en loopback. OpenSSL negoció TLS 1.3; su almacén predeterminado rechazó la cadena autofirmada (`CN=SmartTraffic-Demo-CA`). Las huellas de CA de los tres clientes inspeccionados coinciden con la CA servida; los SAN incluyen el destino privado Kafka `10.42.2.7`. El simulador publicó eventos confirmados; faltan las operaciones efectivas de procesador/archivador y el commit desplegado. | El contenedor Kafka estaba activo. El Compose AWS del checkout configura `CLIENT:SASL_SSL`; el simulador publicó en ejecución, pero no se identificó el commit desplegado ni se verificó por separado la operación de los otros clientes. |
+| Auth Server — token | Clientes solicitan token con OAuth `client_credentials`/`client_secret_basic` a `AUTH_TOKEN_ENDPOINT_URI` por HTTPS; la respuesta vuelve en esa misma conexión. | Java escucha en `*:443` en `vm-auth`; OpenSSL local negoció TLS 1.3, pero la cadena autofirmada (`CN=SmartTraffic-Demo-CA`) no fue confiada por el almacén predeterminado. Las huellas de CA en los truststores de los tres clientes Kafka inspeccionados coinciden con la CA servida; los SAN incluyen el destino privado `10.42.1.201` y `vm-auth`. | El contenedor `auth-server` estaba activo. Las publicaciones recientes del simulador confirman una ruta funcional, pero no se trazaron por separado las solicitudes OAuth de los clientes de `vm-core` ni se identificó el commit desplegado. |
 | Auth Server — JWKS | Kafka y RabbitMQ pueden iniciar conexiones HTTPS salientes al JWKS configurado; no es una conexión iniciada por Auth Server por cada mensaje. Kafka también puede solicitar token para la identidad interbroker cuando su configuración lo requiera. | Pendiente en producción: endpoint, puerto, CA y ruta permitida desde `vm-data` a `vm-auth`. | El Auth Server expone `/oauth2/jwks` cuando RSA está configurado. El fixture Kafka documenta validación de firma, audience e issuer mediante JWKS. Los brokers deben confiar en HTTPS de Auth Server; esto no aprueba endpoints productivos. |
-| RabbitMQ | Clientes configuran `RABBITMQ_HOST`/`RABBITMQ_PORT` y usan AMQPS, validando certificado y hostname del broker. La consulta JWKS del broker es HTTPS independiente. | Pendiente; listener, host, puerto, CA y SAN productivos no están acordados. | El fixture 4.3.7 usa OAuth2 (`rabbitmq_auth_backend_oauth2`), SASL PLAIN para transportar el token, RS256, JWKS HTTPS, validación de audience y `exp`, y no permite anónimo. `5671` es interno a la red del fixture, sin publicación al host; `8443` es del Auth Server de prueba. Ninguno es asignación productiva. |
-| PostgreSQL | El archivador usa `SPRING_DATASOURCE_URL` JDBC. | Pendiente; host y puerto entre VMs no están acordados. | El fixture de integración publica `127.0.0.1:5433` hacia `5432` del contenedor; ambos son datos de prueba local. |
-| Backend del dashboard | `SERVER_PORT` tiene default HTTP de desarrollo `8080`; el navegador usa HTTP/WebSocket same-origin en `/ws/traffic`. | Pendiente; exposición, proxy/ruta y terminación TLS deben acordarse. | El default local no autoriza exposición en AWS. |
+| RabbitMQ | Clientes configuran `RABBITMQ_HOST`/`RABBITMQ_PORT` y usan AMQPS, validando certificado y hostname del broker. La consulta JWKS del broker es HTTPS independiente. | `5672` observado como listener del host; RabbitMQ informa `amqp/ssl`. | Contenedor `rabbitmq:4.3.7` activo. `rabbitmq-diagnostics listeners` confirmó AMQP sobre TLS. La CA PEM de `traffic-density-processor` y de los cuatro clientes de `vm-app` coincide por huella con la raíz servida. El certificado del broker incluye SAN para `10.42.2.7`, `rabbitmq`, `vm-data` y `localhost`; el código local activa hostname verification. La consulta de certificados no demuestra operaciones AMQPS exitosas ni validación efectiva por cada cliente. El fixture usa `5671` y `8443` solo para pruebas. |
+| PostgreSQL | El archivador usa `SPRING_DATASOURCE_URL` JDBC. | `5432` observado en todas las interfaces del host; `SHOW ssl` dentro del contenedor devolvió `off`, por lo que PostgreSQL no ofrece TLS actualmente. | Contenedor `postgres:17-alpine` activo. El fixture de integración publica `127.0.0.1:5433` hacia `5432` del contenedor; ambos son datos de prueba local. |
+| Backend del dashboard | `SERVER_PORT` tiene default HTTP de desarrollo `8080`; el navegador usa HTTP/WebSocket same-origin en `/ws/traffic`. | `127.0.0.1:8080` observado en `vm-app`; `curl` HTTP devolvió 302 a `/dashboard.html` y HTTPS/TLS falló con `wrong version number`. Se alcanzó mediante el túnel SSM, no por ingress público. | El backend no negocia TLS directamente en 8080. La demo mostró conexión y mediciones. La terminación TLS pública no se ha aprobado. `nftables` de las cinco VM tiene política input `drop`; la configuración de HTTPS saliente debe revisarse por su alcance fuera del CIDR de la VPC. |
 Para tráfico entre VMs, no usar `kafka`, `localhost` ni alias de una red Docker
 como destino. El listener Kafka debe anunciar un nombre o dirección privada
 alcanzable y coherente con el SAN del certificado; el listener de control KRaft
@@ -95,13 +200,14 @@ matriz (`vm-core` y, para consumidores publicados, `vm-app`).
 ### Aclaración sobre estado de implementación y seguridad
 
 En este checkout existen adaptadores de Kafka para el simulador, el procesador
-y el archivador. Sin embargo, `docs/kafka-oauth-integration.md` todavía afirma
-que esos adaptadores no existen. Esa guía debe reconciliarse con el código antes
-de usarla como evidencia del estado. La existencia de código, una prueba unitaria
-o una ejecución histórica documentada no demuestra por sí sola la integración
-vigente con broker ni autoriza endpoints productivos. Steven aprobó la precisión
-del texto compartido sobre OAuth, TLS, JWKS y ACLs; esa aprobación no demuestra
-una integración Kafka vigente ni aprueba decisiones productivas.
+y el archivador. `docs/kafka-oauth-integration.md` también los describe junto
+con la configuración del cliente y los requisitos de las pruebas de integración.
+La guía no demuestra por sí sola que la conexión se haya validado en AWS ni
+autoriza endpoints productivos. La existencia de código, una prueba unitaria o
+una ejecución histórica documentada tampoco demuestra por sí sola la integración
+vigente con broker. Steven aprobó la precisión del texto compartido sobre OAuth,
+TLS, JWKS y ACLs; esa aprobación no demuestra una integración Kafka vigente ni
+aprueba decisiones productivas.
 
 TLS ya se usa en los clientes y fixtures descritos: HTTPS hacia token/JWKS,
 SASL_SSL para clientes Kafka y AMQPS para clientes RabbitMQ. Esto no aprueba
@@ -152,9 +258,9 @@ acordarse antes de crear reglas.
 |---|---|---|---|---|---|
 | VM → DNS | El host o servicio que necesite resolver nombres inicia la consulta hacia el resolver configurado. | Consulta y respuesta DNS. | DNS; transporte, servidor y puerto por definir. | Resolución de nombres, solo si la configuración lo requiere. | Condicional y pendiente; no se asigna resolver. |
 | VM → NTP | El host o servicio de tiempo inicia la conexión hacia la fuente de tiempo configurada. | Solicitud y respuesta de sincronización de tiempo. | NTP; servidor, transporte y puerto por definir. | Sincronizar reloj, si se habilita. | Condicional y pendiente; no se asigna servidor. |
-| Portátil de Héctor → VMs | El portátil inicia la sesión; el SSM Agent de la VM mantiene el canal saliente hacia Systems Manager. | Comandos y respuestas de administración por el canal de SSM. | AWS Systems Manager Session Manager; sin SSH público ni ingress administrativo. | Administrar las VM sin ejecutar microservicios en el portátil. | Decisión de demo: Session Manager, rol de instancia `AmazonSSMManagedInstanceCore` y salida TCP 443. Pendiente configurar identidad/IAM y permisos mínimos de Héctor, acceso desde WSL2 a las API de AWS, etiquetas/inventario y validar SSM Agent/conectividad. |
-| Portátil de Héctor → dashboard | El portátil abre port forwarding de Session Manager hacia el listener de `vm-app`; el navegador usa el puerto local del túnel. | HTTP/WebSocket entre el navegador y el backend a través del túnel. | Session Manager port forwarding; no requiere ingress público. | Presentar el dashboard desde el portátil. | Estrategia decidida. Pendiente configurar IAM/CLI/plugin y confirmar listener y puertos local/remoto. No habilita reglas de red de aplicación entre las VM. |
-| VM → Internet para SSM y aprovisionamiento | Cada VM inicia conexiones salientes hacia los endpoints de Systems Manager, repositorios de imágenes y repositorios del sistema operativo. | Solicitud de conexión/descarga: VM → Internet; respuesta por la misma conexión. | TCP 443 a IPv4 Internet mediante IPv4 pública dinámica e Internet Gateway; no se crea NAT Gateway. | Registrar y administrar las instancias con SSM; descargar imágenes y actualizaciones. | Salida configurada por defecto solo en TCP 443. Security Groups no filtran por FQDN, así que los destinos no quedan limitados a una lista de dominios. DNS/NTP y otros destinos opcionales no se habilitan como reglas de egress aquí y deberán verificarse en el despliegue. |
+| Portátil del presentador → VMs | El portátil inicia la sesión; el SSM Agent de la VM mantiene el canal saliente hacia Systems Manager. | Comandos y respuestas de administración por el canal de SSM. | AWS Systems Manager Session Manager; sin SSH público ni ingress administrativo. | Administrar las VM sin ejecutar microservicios en el portátil. | Se abrió una sesión SSM desde el portátil hacia `vm-app`. No se inspeccionó la política IAM para confirmar que limite el acceso a ese destino; la sesión exitosa no demuestra alcance mínimo. |
+| Portátil del presentador → dashboard | El portátil abre port forwarding de Session Manager hacia el listener de `vm-app`; el navegador usa el puerto local del túnel. | HTTP/WebSocket entre el navegador y el backend a través del túnel. | Session Manager port forwarding; no requiere ingress público. | Presentar el dashboard desde el portátil. | Verificado: puerto remoto `8080`, puerto local `18080`; el navegador recibió datos en vivo. Security Groups y `nftables` se inspeccionaron; `vm-app` no tenía ingress y `nftables` aplica `drop` en input. No se probó exposición pública. |
+| VM → Internet para SSM y aprovisionamiento | Cada VM inicia conexiones salientes hacia los endpoints de Systems Manager, repositorios de imágenes y repositorios del sistema operativo. | Solicitud de conexión/descarga: VM → Internet; respuesta por la misma conexión. | En Terraform y Security Groups se observó TCP 443; `nftables` en las cinco VM permite TCP 443 a destinos fuera del CIDR de la VPC. | Registrar y administrar las instancias con SSM; descargar imágenes y actualizaciones. | Los Security Groups no filtran por FQDN. La excepción HTTPS está activa en las cinco VM y no limita los destinos a una lista de dominios; se debe decidir si esta salida amplia es necesaria. DNS/NTP y otros destinos opcionales siguen sujetos a aprobación. |
 
 ## Uso posterior para reglas `nftables`
 

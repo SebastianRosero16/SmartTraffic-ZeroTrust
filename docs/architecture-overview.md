@@ -31,24 +31,24 @@ despliegues por VM evita proponer una única red Docker plana que conecte
 indiscriminadamente todas las zonas. La topología concreta de redes y archivos
 Compose se detallará durante la implementación.
 
-El backend y la interfaz del dashboard ya implementan el consumo RabbitMQ y la
-entrega por WebSocket, pero ese recorrido no se ha validado conectado a un
-broker. La cola `dashboard_updates_queue` y el endpoint `/ws/traffic` son
-valores provisionales de desarrollo; la topología y los permisos definitivos
-siguen pendientes. Los requisitos de ejecución están en el
-[README del backend](../services/user-dashboard-backend/README.md).
+El backend y la interfaz del dashboard implementan el consumo RabbitMQ y la
+entrega por WebSocket. En la demostración AWS del 17 de noviembre de 2026, el
+dashboard se abrió por un túnel SSM y mostró conexión al backend y mediciones
+en vivo. La topología desplegada, el commit y los permisos efectivos del broker
+no se identificaron; `dashboard_updates_queue` y `/ws/traffic` no deben
+considerarse aprobaciones formales de producción. Los requisitos de ejecución
+están en el [README del backend](../services/user-dashboard-backend/README.md).
 
-`alert-dispatcher` y `query-client` ya implementan el consumo y respuesta a
-consultas correlacionadas, así como alertas de registro por transición de
-estado. Ambos tienen pruebas unitarias, pero el flujo conjunto aún no se ha
-validado con un broker RabbitMQ. Las reglas de notificación, los nombres de
-topología de producción y los permisos definitivos siguen pendientes.
+`alert-dispatcher` y `query-client` implementan consumo/respuesta a consultas
+correlacionadas y alertas por transición de estado. La demo AWS mostró
+respuestas de consulta y transiciones, pero no se identificó el commit
+desplegado ni se revisó la autorización efectiva del broker. Las reglas de
+notificación, los nombres de topología de producción y los permisos definitivos
+siguen pendientes.
 
-Esta implementación está únicamente en cambios locales sin seguimiento: no
-está incluida en la base publicada `develop` (`270efc1ccc27ccb9992ba65539faf70dc3902b24`).
-Por tanto, el texto anterior describe el checkout local y no debe interpretarse
-como funcionalidad disponible al clonar esa base. Sus pruebas unitarias no se
-ejecutaron durante esta revisión.
+El checkout actual contiene cambios locales no publicados para estos servicios.
+La demo no se vinculó a un commit, por lo que no se puede afirmar que un clon
+limpio reproduzca esa ejecución. Publicar y validar la versión que se presentará.
 
 ## Responsabilidades de los servicios
 
@@ -302,8 +302,11 @@ del equipo; no reemplazan los requisitos anteriores.
 - Elegir proveedor de virtualización y la herramienta de aprovisionamiento
   (por ejemplo, Vagrant o Ansible), y confirmar compatibilidad con los recursos
   disponibles.
-- Medir y acordar valores de CPU/RAM, flags JVM y cantidad de réplicas;
-  especificar monitoreo, registros, reintentos, idempotencia y recuperación.
+- Verificar límites efectivos de CPU/RAM y flags JVM. `vm-app` configura dos
+  réplicas fijas de `query-client` como servicios independientes por sus
+  identidades y colas de respuesta; cualquier escalamiento requiere provisionar
+  esos recursos por instancia. Especificar monitoreo, registros, reintentos,
+  idempotencia y recuperación.
 
 ## Riesgos técnicos iniciales
 
@@ -323,6 +326,11 @@ del equipo; no reemplazan los requisitos anteriores.
 
 ## Estado
 
-Este documento describe el diseño inicial propuesto. No confirma que se hayan
-creado o probado VMs, contenedores, servicios, reglas de firewall ni
-automatizaciones.
+Este documento describe el diseño y la evidencia disponible, no una
+certificación de seguridad ni una receta reproducible. La demo funcional en
+AWS se validó por SSM. Se inspeccionaron Security Groups y `nftables` en las
+cinco VM; se observó política `drop` por defecto en `nftables` y egreso TCP 443
+a destinos fuera del CIDR de la VPC. Terraform no se reconcilió con el estado
+vivo y no se identificó el commit desplegado. Consulta el [README raíz](../README.md) y la
+[matriz de red](network-matrix.md) antes de presentar el despliegue como
+reproducible o con controles Zero Trust verificados.
