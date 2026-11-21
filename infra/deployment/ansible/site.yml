@@ -435,7 +435,9 @@
           - --env-file
           - "/etc/smarttraffic/{{ smarttraffic_role }}.env"
           - --file
-          - "/opt/smarttraffic/{{ smarttraffic_compose_files[smarttraffic_role] }}"
+          - "/opt/smarttraffic/{{ smarttraffic_compose_file }}"
+          - --profile
+          - "{{ smarttraffic_compose_profiles[smarttraffic_role] }}"
           - config
           - --quiet
       changed_when: false
@@ -458,7 +460,9 @@
           - --env-file
           - /etc/smarttraffic/vm-auth.env
           - --file
-          - /opt/smarttraffic/infra/vm-auth/compose.yaml
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - auth
           - up
           - --detach
           - --no-build
@@ -472,7 +476,9 @@
           - --env-file
           - /etc/smarttraffic/vm-auth.env
           - --file
-          - /opt/smarttraffic/infra/vm-auth/compose.yaml
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - auth
           - restart
           - auth-server
       when: hostvars['vm-auth'].smarttraffic_mounted_config_copy.changed | default(false)
@@ -496,7 +502,9 @@
           - --env-file
           - /etc/smarttraffic/vm-data.env
           - --file
-          - /opt/smarttraffic/infra/vm-data/compose.aws.yaml
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - data
           - up
           - --detach
           - --no-build
@@ -512,7 +520,9 @@
       - --env-file
       - /etc/smarttraffic/vm-data.env
       - --file
-      - /opt/smarttraffic/infra/vm-data/compose.aws.yaml
+      - /opt/smarttraffic/infra/compose.yaml
+      - --profile
+      - data
       - exec
       - -T
       - kafka
@@ -665,7 +675,9 @@
           - --env-file
           - "/etc/smarttraffic/{{ smarttraffic_role }}.env"
           - --file
-          - "/opt/smarttraffic/{{ smarttraffic_compose_files[smarttraffic_role] }}"
+          - "/opt/smarttraffic/{{ smarttraffic_compose_file }}"
+          - --profile
+          - "{{ smarttraffic_compose_profiles[smarttraffic_role] }}"
           - up
           - --detach
           - --no-build
@@ -684,7 +696,9 @@
           - --env-file
           - /etc/smarttraffic/vm-ingest.env
           - --file
-          - /opt/smarttraffic/infra/vm-ingest/compose.yaml
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - ingest
           - up
           - --detach
           - --no-build

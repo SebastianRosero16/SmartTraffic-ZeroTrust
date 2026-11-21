@@ -1,16 +1,49 @@
 # AWS deployment workflow
 
-The five role-specific EC2 instances run separate Compose projects. Their
-Security Groups have no application ingress by default; services communicate
-over private addresses:
+The five role-specific EC2 instances all use the single canonical Compose file
+`infra/compose.yaml`. Each VM activates only its own profile; no VM runs
+services from another profile. Security Groups have no application ingress by
+default; services communicate over private addresses:
 
-| VM | Compose file | Services |
+| VM | Profile | Services |
 |---|---|---|
-| `vm-auth` | `infra/vm-auth/compose.yaml` | Auth Server |
-| `vm-data` | `infra/vm-data/compose.aws.yaml` | Kafka, RabbitMQ, PostgreSQL |
-| `vm-ingest` | `infra/vm-ingest/compose.yaml` | Traffic sensor simulator |
-| `vm-core` | `infra/vm-core/compose.yaml` | Traffic density processor, traffic archiver |
-| `vm-app` | `infra/vm-app/compose.yaml` | Dashboard backend, alert dispatcher, two query clients |
+| `vm-auth` | `auth` | Auth Server |
+| `vm-data` | `data` | Kafka, RabbitMQ, PostgreSQL |
+| `vm-ingest` | `ingest` | Traffic sensor simulator |
+| `vm-core` | `core` | Traffic density processor, traffic archiver |
+| `vm-app` | `app` | Dashboard backend, alert dispatcher, two query clients |
+
+A `dashboard` profile is also defined for an optional dedicated EC2 node that
+runs only the dashboard backend. Use it only when `vm-app` does **not** run the
+`app` profile; both consuming `dashboard_updates_queue` on the same RabbitMQ
+broker would split messages between two consumers.
+
+### Validating a profile locally
+
+Use `infra/.env.validation.example` (no real secrets) to check that the
+Compose configuration resolves for a given profile:
+
+```sh
+# From infra/
+docker compose --env-file .env.validation.example -f compose.yaml --profile auth    config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile data    config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile ingest  config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile core    config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile app     config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile dashboard config --quiet
+```
+
+### Test-only Compose files
+
+The following Compose files are kept separate because they exist only to
+support integration tests and local fixtures; they are not deployment files:
+
+- `infra/vm-data/postgres-it/compose.yaml` — spins up a disposable PostgreSQL
+  container for the archiver integration tests.
+- `infra/vm-data/rabbitmq/compose.yaml` — spins up a RabbitMQ container for
+  the OAuth integration tests.
+
+Ansible and production deployments never reference these files.
 
 Compose files use Linux host networking intentionally: each VM's nftables
 firewall can enforce the service-to-service policy directly. The dashboard

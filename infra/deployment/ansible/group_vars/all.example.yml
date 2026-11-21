@@ -29,12 +29,15 @@ smarttraffic_data_volumes:
     group: "10001"
     mode: "0770"
 
-smarttraffic_compose_files:
-  vm-auth: infra/vm-auth/compose.yaml
-  vm-data: infra/vm-data/compose.aws.yaml
-  vm-ingest: infra/vm-ingest/compose.yaml
-  vm-core: infra/vm-core/compose.yaml
-  vm-app: infra/vm-app/compose.yaml
+# All VMs use the single canonical Compose file; the profile selects services.
+smarttraffic_compose_file: infra/compose.yaml
+
+smarttraffic_compose_profiles:
+  vm-auth: auth
+  vm-data: data
+  vm-ingest: ingest
+  vm-core: core
+  vm-app: app
 
 smarttraffic_env_files:
   vm-auth: vm-auth.env
