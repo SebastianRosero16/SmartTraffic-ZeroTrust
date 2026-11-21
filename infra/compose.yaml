@@ -1,0 +1,517 @@
+# SmartTraffic – canonical Compose orchestration file
+#
+# Each service is defined once and tagged with the profile that matches
+# the VM it runs on.  Activate a single profile per host:
+#
+#   docker compose --profile auth   up -d --no-build --wait
+#   docker compose --profile data   up -d --no-build --wait
+#   docker compose --profile ingest up -d --no-build --wait
+#   docker compose --profile core   up -d --no-build --wait
+#   docker compose --profile app    up -d --no-build --wait
+#   docker compose --profile dashboard up -d --no-build --wait
+#
+# Ansible passes --profile via the COMPOSE_PROFILES variable or the
+# --profile flag; it always supplies --env-file with the per-VM env file.
+#
+# Test-only Compose files are kept separate:
+#   infra/vm-data/postgres-it/compose.yaml
+#   infra/vm-data/rabbitmq/compose.yaml
+#
+# No secrets or real values appear here; every sensitive variable uses
+# the ${VAR:?error message} form so a misconfigured launch fails fast.
+
+name: smarttraffic
+
+# ---------------------------------------------------------------------------
+# Shared extension: RabbitMQ client defaults used by vm-app services
+# ---------------------------------------------------------------------------
+x-rabbitmq-client: &rabbitmq-client
+  network_mode: host
+  restart: unless-stopped
+  environment: &rabbitmq-environment
+    RABBITMQ_HOST: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}"
+    RABBITMQ_PORT: "5672"
+    RABBITMQ_VHOST: "${RABBITMQ_VHOST:-smarttraffic}"
+    AUTH_TOKEN_ENDPOINT_URI: "${AUTH_TOKEN_ENDPOINT_URI:?Set HTTPS Auth token endpoint}"
+    AUTH_TLS_CA_CERT_PATH: /run/certs/auth-ca.pem
+    RABBITMQ_TLS_CA_CERT_PATH: /run/certs/rabbitmq-ca.pem
+  volumes:
+    - type: bind
+      source: "${APP_TLS_DIR:?Set APP_TLS_DIR to the client trust material directory}"
+      target: /run/certs
+      read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+
+  # -------------------------------------------------------------------------
+  # profile: auth  — vm-auth
+  # -------------------------------------------------------------------------
+  auth-server:
+    profiles: [auth]
+    image: smarttraffic/auth-server:local
+    restart: unless-stopped
+    network_mode: host
+    user: "10001:10001"
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: "443"
+      SERVER_SSL_ENABLED: "true"
+      SERVER_SSL_KEY_STORE: /run/auth/tls/auth-server.p12
+      SERVER_SSL_KEY_STORE_TYPE: PKCS12
+      SERVER_SSL_KEY_STORE_PASSWORD: "${AUTH_TLS_KEYSTORE_PASSWORD:?Set AUTH_TLS_KEYSTORE_PASSWORD}"
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/run/auth/config/
+      SMARTTRAFFIC_AUTH_ISSUER: "${AUTH_ISSUER_URI:?Set AUTH_ISSUER_URI}"
+      SMARTTRAFFIC_AUTH_PRIVATE_KEY_PATH: /run/auth/signing/private.pem
+      SMARTTRAFFIC_AUTH_PUBLIC_KEY_PATH: /run/auth/signing/public.pem
+    volumes:
+      - type: bind
+        source: "${AUTH_TLS_DIR:?Set AUTH_TLS_DIR to a protected host directory}"
+        target: /run/auth/tls
+        read_only: true
+      - type: bind
+        source: "${AUTH_SIGNING_KEYS_DIR:?Set AUTH_SIGNING_KEYS_DIR to a protected host directory}"
+        target: /run/auth/signing
+        read_only: true
+      - type: bind
+        source: "${AUTH_RUNTIME_CONFIG_DIR:?Set AUTH_RUNTIME_CONFIG_DIR to a protected host directory}"
+        target: /run/auth/config
+        read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits:
+          cpus: "${AUTH_SERVER_CPUS:?Set AUTH_SERVER_CPUS after sizing}"
+          memory: "${AUTH_SERVER_MEMORY:?Set AUTH_SERVER_MEMORY after sizing}"
+
+  # -------------------------------------------------------------------------
+  # profile: data  — vm-data  (Kafka, RabbitMQ, PostgreSQL)
+  # Uses the production/AWS configuration derived from compose.aws.yaml.
+  # Data volumes are bind-mounted to EBS-backed host paths provisioned by
+  # Ansible; create_host_path is false to enforce that Ansible runs first.
+  # -------------------------------------------------------------------------
+  kafka:
+    profiles: [data]
+    image: smarttraffic/kafka-oauth:4.4.0-oauth-0.18.1
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      CLUSTER_ID: "${KAFKA_CLUSTER_ID:?Set KAFKA_CLUSTER_ID}"
+      CLIENT_PORT: "9092"
+      CONTROLLER_PORT: "9093"
+      OAUTH_JWKS_ENDPOINT: "${AUTH_JWKS_URI:?Set HTTPS Auth JWKS URI}"
+      OAUTH_ISSUER_URI: "${AUTH_ISSUER_URI:?Set AUTH_ISSUER_URI}"
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_HEAP_OPTS: "${KAFKA_HEAP_OPTS:--Xms512m -Xmx1536m}"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
+      KAFKA_LISTENERS: "CLIENT://0.0.0.0:9092,CONTROLLER://127.0.0.1:9093"
+      KAFKA_ADVERTISED_LISTENERS: "CLIENT://${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_SSL,CONTROLLER:SSL"
+      KAFKA_LISTENER_NAME_CONTROLLER_SSL_CLIENT_AUTH: "required"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "CLIENT"
+      KAFKA_CONNECTIONS_MAX_REAUTH_MS: "240000"
+      KAFKA_SASL_ENABLED_MECHANISMS: "OAUTHBEARER"
+      KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required
+        oauth.jwks.endpoint.uri="${AUTH_JWKS_URI}"
+        oauth.valid.issuer.uri="${AUTH_ISSUER_URI}"
+        oauth.check.audience="true"
+        oauth.client.id="${KAFKA_OAUTH_AUDIENCE}"
+        oauth.client.secret="${KAFKA_BROKER_CLIENT_SECRET}"
+        oauth.scope="${KAFKA_BROKER_OAUTH_SCOPE}"
+        oauth.token.endpoint.uri="${AUTH_TOKEN_ENDPOINT_URI}"
+        oauth.ssl.truststore.location="/etc/kafka/secrets/auth-truststore.p12"
+        oauth.ssl.truststore.password="${AUTH_TLS_TRUSTSTORE_PASSWORD}"
+        oauth.ssl.truststore.type="PKCS12";
+      KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_SERVER_CALLBACK_HANDLER_CLASS: "io.strimzi.kafka.oauth.server.JaasServerOauthValidatorCallbackHandler"
+      KAFKA_PRINCIPAL_BUILDER_CLASS: "io.strimzi.kafka.oauth.server.OAuthKafkaPrincipalBuilder"
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: "OAUTHBEARER"
+      KAFKA_LISTENER_NAME_CLIENT_OAUTHBEARER_SASL_LOGIN_CALLBACK_HANDLER_CLASS: "io.strimzi.kafka.oauth.client.JaasClientOauthLoginCallbackHandler"
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/tmp/kafka-client-jaas.conf"
+      KAFKA_AUTHORIZER_CLASS_NAME: "org.apache.kafka.metadata.authorizer.StandardAuthorizer"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+      KAFKA_SUPER_USERS: "${KAFKA_SUPER_USERS:?Set KAFKA_SUPER_USERS to reviewed broker principals}"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "1"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_SSL_CLIENT_AUTH: "${KAFKA_TLS_CLIENT_AUTH:-none}"
+      KAFKA_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/broker.keystore.p12
+      KAFKA_SSL_KEYSTORE_PASSWORD: "${KAFKA_TLS_KEYSTORE_PASSWORD:?Set KAFKA_TLS_KEYSTORE_PASSWORD}"
+      KAFKA_SSL_KEY_PASSWORD: "${KAFKA_TLS_KEY_PASSWORD:?Set KAFKA_TLS_KEY_PASSWORD}"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/broker.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: "${KAFKA_TLS_TRUSTSTORE_PASSWORD:?Set KAFKA_TLS_TRUSTSTORE_PASSWORD}"
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+    volumes:
+      - type: bind
+        source: /srv/smarttraffic/kafka
+        target: /var/lib/kafka/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${KAFKA_TLS_DIR:?Set KAFKA_TLS_DIR to a protected host directory}"
+        target: /etc/kafka/secrets
+        read_only: true
+      - type: bind
+        source: "${KAFKA_CLIENT_JAAS_FILE:?Set KAFKA_CLIENT_JAAS_FILE to a protected host file}"
+        target: /tmp/kafka-client-jaas.conf
+        read_only: true
+    cap_drop:
+      - ALL
+    group_add:
+      - "10001"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "${KAFKA_CPUS:?Set KAFKA_CPUS after sizing}"
+          memory: "${KAFKA_MEMORY:?Set KAFKA_MEMORY after sizing}"
+
+  rabbitmq:
+    profiles: [data]
+    image: rabbitmq:4.3.7
+    hostname: rabbitmq
+    restart: unless-stopped
+    user: "999:10001"
+    network_mode: host
+    environment:
+      RABBITMQ_RESOURCE_SERVER_ID: "${RABBITMQ_RESOURCE_SERVER_ID:-smarttraffic-rabbitmq}"
+      RABBITMQ_OAUTH_JWKS_URI: "${AUTH_JWKS_URI:?Set HTTPS Auth JWKS URI}"
+    volumes:
+      - type: bind
+        source: ./vm-data/rabbitmq-production.conf
+        target: /etc/rabbitmq/rabbitmq.conf
+        read_only: true
+      - type: bind
+        source: ./vm-data/rabbitmq/enabled_plugins
+        target: /etc/rabbitmq/enabled_plugins
+        read_only: true
+      - type: bind
+        source: ./vm-data/rabbitmq/production-definitions.json
+        target: /etc/rabbitmq/definitions.json
+        read_only: true
+      - type: bind
+        source: "${RABBITMQ_TLS_DIR:?Set RABBITMQ_TLS_DIR to a protected host directory}"
+        target: /etc/rabbitmq/certs
+        read_only: true
+      - type: bind
+        source: /srv/smarttraffic/rabbitmq
+        target: /var/lib/rabbitmq
+        bind:
+          create_host_path: false
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "${RABBITMQ_CPUS:?Set RABBITMQ_CPUS after sizing}"
+          memory: "${RABBITMQ_MEMORY:?Set RABBITMQ_MEMORY after sizing}"
+
+  postgres:
+    profiles: [data]
+    image: postgres:17-alpine
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-smarttraffic}"
+      POSTGRES_USER: "${POSTGRES_ADMIN_USER:?Set POSTGRES_ADMIN_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD}"
+      APP_DB_USER: "${POSTGRES_APP_USER:?Set POSTGRES_APP_USER}"
+      APP_DB_PASSWORD: "${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD}"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - type: bind
+        source: /srv/smarttraffic/postgres
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./vm-data/postgres-init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "${POSTGRES_CPUS:?Set POSTGRES_CPUS after sizing}"
+          memory: "${POSTGRES_MEMORY:?Set POSTGRES_MEMORY after sizing}"
+
+  # -------------------------------------------------------------------------
+  # profile: ingest  — vm-ingest
+  # -------------------------------------------------------------------------
+  traffic-sensor-simulator:
+    profiles: [ingest]
+    image: smarttraffic/traffic-sensor-simulator:local
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:9092"
+      KAFKA_TRAFFIC_READINGS_TOPIC: "${KAFKA_TRAFFIC_READINGS_TOPIC:-traffic_readings}"
+      AUTH_TOKEN_ENDPOINT_URI: "${AUTH_TOKEN_ENDPOINT_URI:?Set HTTPS Auth token endpoint}"
+      KAFKA_OAUTH_CLIENT_ID: "${KAFKA_SENSOR_CLIENT_ID:?Set KAFKA_SENSOR_CLIENT_ID}"
+      KAFKA_OAUTH_CLIENT_SECRET: "${KAFKA_SENSOR_CLIENT_SECRET:?Set KAFKA_SENSOR_CLIENT_SECRET}"
+      KAFKA_OAUTH_SCOPE: "${KAFKA_SENSOR_OAUTH_SCOPE:?Set KAFKA_SENSOR_OAUTH_SCOPE}"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /run/certs/kafka-truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: "${KAFKA_TRUSTSTORE_PASSWORD:?Set KAFKA_TRUSTSTORE_PASSWORD}"
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      AUTH_SSL_TRUSTSTORE_LOCATION: /run/certs/auth-truststore.p12
+      AUTH_SSL_TRUSTSTORE_PASSWORD: "${AUTH_TRUSTSTORE_PASSWORD:?Set AUTH_TRUSTSTORE_PASSWORD}"
+      AUTH_SSL_TRUSTSTORE_TYPE: PKCS12
+      TRAFFIC_SENSOR_IDS: "${TRAFFIC_SENSOR_IDS:?Set TRAFFIC_SENSOR_IDS}"
+      TRAFFIC_ZONE_IDS: "${TRAFFIC_ZONE_IDS:?Set TRAFFIC_ZONE_IDS}"
+      TRAFFIC_MIN_VEHICLES: "${TRAFFIC_MIN_VEHICLES:?Set TRAFFIC_MIN_VEHICLES}"
+      TRAFFIC_MAX_VEHICLES: "${TRAFFIC_MAX_VEHICLES:?Set TRAFFIC_MAX_VEHICLES}"
+      TRAFFIC_INTERVAL_MS: "${TRAFFIC_INTERVAL_MS:?Set TRAFFIC_INTERVAL_MS}"
+    volumes:
+      - type: bind
+        source: "${APP_TLS_DIR:?Set APP_TLS_DIR to the client trust material directory}"
+        target: /run/certs
+        read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "${SIMULATOR_CPUS:?Set SIMULATOR_CPUS after sizing}"
+          memory: "${SIMULATOR_MEMORY:?Set SIMULATOR_MEMORY after sizing}"
+
+  # -------------------------------------------------------------------------
+  # profile: core  — vm-core
+  # -------------------------------------------------------------------------
+  traffic-density-processor:
+    profiles: [core]
+    image: smarttraffic/traffic-density-processor:local
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:9092"
+      KAFKA_TRAFFIC_READINGS_TOPIC: "${KAFKA_TRAFFIC_READINGS_TOPIC:-traffic_readings}"
+      KAFKA_STREAMS_APPLICATION_ID: "${KAFKA_STREAMS_APPLICATION_ID:?Set KAFKA_STREAMS_APPLICATION_ID}"
+      AUTH_TOKEN_ENDPOINT_URI: "${AUTH_TOKEN_ENDPOINT_URI:?Set HTTPS Auth token endpoint}"
+      KAFKA_OAUTH_CLIENT_ID: "${KAFKA_PROCESSOR_CLIENT_ID:?Set KAFKA_PROCESSOR_CLIENT_ID}"
+      KAFKA_OAUTH_CLIENT_SECRET: "${KAFKA_PROCESSOR_CLIENT_SECRET:?Set KAFKA_PROCESSOR_CLIENT_SECRET}"
+      KAFKA_OAUTH_SCOPE: "${KAFKA_PROCESSOR_OAUTH_SCOPE:?Set KAFKA_PROCESSOR_OAUTH_SCOPE}"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /run/certs/kafka-truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: "${KAFKA_TRUSTSTORE_PASSWORD:?Set KAFKA_TRUSTSTORE_PASSWORD}"
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      AUTH_SSL_TRUSTSTORE_LOCATION: /run/certs/auth-truststore.p12
+      AUTH_SSL_TRUSTSTORE_PASSWORD: "${AUTH_TRUSTSTORE_PASSWORD:?Set AUTH_TRUSTSTORE_PASSWORD}"
+      AUTH_SSL_TRUSTSTORE_TYPE: PKCS12
+      RABBITMQ_HOST: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}"
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_VHOST: "${RABBITMQ_VHOST:-smarttraffic}"
+      RABBITMQ_EXCHANGE: "${RABBITMQ_UPDATES_EXCHANGE:-traffic_updates}"
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_PROCESSOR_CLIENT_ID:?Set RABBITMQ_PROCESSOR_CLIENT_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_PROCESSOR_CLIENT_SECRET:?Set RABBITMQ_PROCESSOR_CLIENT_SECRET}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_PROCESSOR_OAUTH_SCOPE:?Set RABBITMQ_PROCESSOR_OAUTH_SCOPE}"
+      AUTH_TLS_CA_CERT_PATH: /run/certs/auth-ca.pem
+      RABBITMQ_TLS_CA_CERT_PATH: /run/certs/rabbitmq-ca.pem
+      TRAFFIC_WINDOW_SECONDS: "${TRAFFIC_WINDOW_SECONDS:?Set TRAFFIC_WINDOW_SECONDS}"
+      TRAFFIC_WINDOW_GRACE_SECONDS: "${TRAFFIC_WINDOW_GRACE_SECONDS:?Set TRAFFIC_WINDOW_GRACE_SECONDS}"
+      TRAFFIC_DENSITY_STRATEGY: "${TRAFFIC_DENSITY_STRATEGY:-average}"
+      TRAFFIC_MODERATE_THRESHOLD: "${TRAFFIC_MODERATE_THRESHOLD:?Set TRAFFIC_MODERATE_THRESHOLD}"
+      TRAFFIC_CONGESTED_THRESHOLD: "${TRAFFIC_CONGESTED_THRESHOLD:?Set TRAFFIC_CONGESTED_THRESHOLD}"
+    volumes:
+      - type: bind
+        source: "${APP_TLS_DIR:?Set APP_TLS_DIR to the client trust material directory}"
+        target: /run/certs
+        read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "${PROCESSOR_CPUS:?Set PROCESSOR_CPUS after sizing}"
+          memory: "${PROCESSOR_MEMORY:?Set PROCESSOR_MEMORY after sizing}"
+
+  traffic-archiver:
+    profiles: [core]
+    image: smarttraffic/traffic-archiver:local
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:9092"
+      KAFKA_TRAFFIC_READINGS_TOPIC: "${KAFKA_TRAFFIC_READINGS_TOPIC:-traffic_readings}"
+      AUTH_TOKEN_ENDPOINT_URI: "${AUTH_TOKEN_ENDPOINT_URI:?Set HTTPS Auth token endpoint}"
+      KAFKA_OAUTH_CLIENT_ID: "${KAFKA_ARCHIVER_CLIENT_ID:?Set KAFKA_ARCHIVER_CLIENT_ID}"
+      KAFKA_OAUTH_CLIENT_SECRET: "${KAFKA_ARCHIVER_CLIENT_SECRET:?Set KAFKA_ARCHIVER_CLIENT_SECRET}"
+      KAFKA_OAUTH_SCOPE: "${KAFKA_ARCHIVER_OAUTH_SCOPE:?Set KAFKA_ARCHIVER_OAUTH_SCOPE}"
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /run/certs/kafka-truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: "${KAFKA_TRUSTSTORE_PASSWORD:?Set KAFKA_TRUSTSTORE_PASSWORD}"
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+      AUTH_SSL_TRUSTSTORE_LOCATION: /run/certs/auth-truststore.p12
+      AUTH_SSL_TRUSTSTORE_PASSWORD: "${AUTH_TRUSTSTORE_PASSWORD:?Set AUTH_TRUSTSTORE_PASSWORD}"
+      AUTH_SSL_TRUSTSTORE_TYPE: PKCS12
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://${VM_DATA_PRIVATE_IP:?Set VM_DATA_PRIVATE_IP}:5432/${POSTGRES_DB:-smarttraffic}"
+      SPRING_DATASOURCE_USERNAME: "${POSTGRES_APP_USER:?Set POSTGRES_APP_USER}"
+      SPRING_DATASOURCE_PASSWORD: "${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD}"
+    volumes:
+      - type: bind
+        source: "${APP_TLS_DIR:?Set APP_TLS_DIR to the client trust material directory}"
+        target: /run/certs
+        read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "${ARCHIVER_CPUS:?Set ARCHIVER_CPUS after sizing}"
+          memory: "${ARCHIVER_MEMORY:?Set ARCHIVER_MEMORY after sizing}"
+
+  # -------------------------------------------------------------------------
+  # profile: app  — vm-app
+  # Includes user-dashboard-backend, alert-dispatcher, and both query clients.
+  # NOTE: user-dashboard-backend is NOT included in profile "dashboard" and
+  # vice versa. The two profiles are mutually exclusive: running both on
+  # different hosts against the same RabbitMQ setup would cause two consumers
+  # to compete over dashboard_updates_queue. Deploy either "app" (all four
+  # services on vm-app) OR "dashboard" (backend only on a dedicated EC2 node).
+  # -------------------------------------------------------------------------
+  user-dashboard-backend:
+    profiles: [app]
+    image: smarttraffic/user-dashboard-backend:local
+    <<: *rabbitmq-client
+    environment:
+      <<: *rabbitmq-environment
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_DASHBOARD_CLIENT_ID:?Set RABBITMQ_DASHBOARD_CLIENT_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_DASHBOARD_CLIENT_SECRET:?Set RABBITMQ_DASHBOARD_CLIENT_SECRET}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_DASHBOARD_OAUTH_SCOPE:?Set RABBITMQ_DASHBOARD_OAUTH_SCOPE}"
+      RABBITMQ_DASHBOARD_QUEUE: "${RABBITMQ_DASHBOARD_QUEUE:-dashboard_updates_queue}"
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: "8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "${DASHBOARD_CPUS:?Set DASHBOARD_CPUS after sizing}"
+          memory: "${DASHBOARD_MEMORY:?Set DASHBOARD_MEMORY after sizing}"
+
+  alert-dispatcher:
+    profiles: [app]
+    image: smarttraffic/alert-dispatcher:local
+    <<: *rabbitmq-client
+    environment:
+      <<: *rabbitmq-environment
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_ALERTS_CLIENT_ID:?Set RABBITMQ_ALERTS_CLIENT_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_ALERTS_CLIENT_SECRET:?Set RABBITMQ_ALERTS_CLIENT_SECRET}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_ALERTS_OAUTH_SCOPE:?Set RABBITMQ_ALERTS_OAUTH_SCOPE}"
+      RABBITMQ_ALERT_QUEUE: "${RABBITMQ_ALERT_QUEUE:-alert_updates_queue}"
+      RABBITMQ_QUERY_QUEUE: "${RABBITMQ_QUERY_QUEUE:-query_traffic_queue}"
+      RABBITMQ_QUERY_ANSWERS_EXCHANGE: "${RABBITMQ_QUERY_ANSWERS_EXCHANGE:-query_answers}"
+      RABBITMQ_QUERY_REPLY_ROUTES: "${RABBITMQ_QUERY_REPLY_ROUTES:?Set the allowlisted instance=queue pairs}"
+    deploy:
+      resources:
+        limits:
+          cpus: "${ALERTS_CPUS:?Set ALERTS_CPUS after sizing}"
+          memory: "${ALERTS_MEMORY:?Set ALERTS_MEMORY after sizing}"
+
+  query-client-1:
+    profiles: [app]
+    image: smarttraffic/query-client:local
+    <<: *rabbitmq-client
+    environment:
+      <<: *rabbitmq-environment
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_QUERY_CLIENT_1_ID:?Set RABBITMQ_QUERY_CLIENT_1_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_QUERY_CLIENT_1_SECRET:?Set RABBITMQ_QUERY_CLIENT_1_SECRET}"
+      RABBITMQ_QUERY_EXCHANGE: "${RABBITMQ_QUERY_EXCHANGE:?Set RABBITMQ_QUERY_EXCHANGE}"
+      RABBITMQ_QUERY_QUEUE: "${RABBITMQ_QUERY_QUEUE:-query_traffic_queue}"
+      RABBITMQ_QUERY_REPLY_QUEUE: "${RABBITMQ_QUERY_REPLY_QUEUE_1:?Set a provisioned reply queue for client 1}"
+      RABBITMQ_QUERY_CLIENT_ID: "${RABBITMQ_QUERY_CLIENT_1_ID:?Set RABBITMQ_QUERY_CLIENT_1_ID}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_QUERY_CLIENT_1_SCOPE:?Set RABBITMQ_QUERY_CLIENT_1_SCOPE}"
+      QUERY_ZONE_IDS: "${QUERY_ZONE_IDS:?Set QUERY_ZONE_IDS}"
+      QUERY_INTERVAL_SECONDS: "${QUERY_INTERVAL_SECONDS:-10}"
+      QUERY_TIMEOUT_SECONDS: "${QUERY_TIMEOUT_SECONDS:-10}"
+    deploy:
+      resources:
+        limits:
+          cpus: "${QUERY_CLIENT_CPUS:?Set QUERY_CLIENT_CPUS after sizing}"
+          memory: "${QUERY_CLIENT_MEMORY:?Set QUERY_CLIENT_MEMORY after sizing}"
+
+  query-client-2:
+    profiles: [app]
+    image: smarttraffic/query-client:local
+    <<: *rabbitmq-client
+    environment:
+      <<: *rabbitmq-environment
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_QUERY_CLIENT_2_ID:?Set RABBITMQ_QUERY_CLIENT_2_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_QUERY_CLIENT_2_SECRET:?Set RABBITMQ_QUERY_CLIENT_2_SECRET}"
+      RABBITMQ_QUERY_EXCHANGE: "${RABBITMQ_QUERY_EXCHANGE:?Set RABBITMQ_QUERY_EXCHANGE}"
+      RABBITMQ_QUERY_QUEUE: "${RABBITMQ_QUERY_QUEUE:-query_traffic_queue}"
+      RABBITMQ_QUERY_REPLY_QUEUE: "${RABBITMQ_QUERY_REPLY_QUEUE_2:?Set a provisioned reply queue for client 2}"
+      RABBITMQ_QUERY_CLIENT_ID: "${RABBITMQ_QUERY_CLIENT_2_ID:?Set RABBITMQ_QUERY_CLIENT_2_ID}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_QUERY_CLIENT_2_SCOPE:?Set RABBITMQ_QUERY_CLIENT_2_SCOPE}"
+      QUERY_ZONE_IDS: "${QUERY_ZONE_IDS:?Set QUERY_ZONE_IDS}"
+      QUERY_INTERVAL_SECONDS: "${QUERY_INTERVAL_SECONDS:-10}"
+      QUERY_TIMEOUT_SECONDS: "${QUERY_TIMEOUT_SECONDS:-10}"
+    deploy:
+      resources:
+        limits:
+          cpus: "${QUERY_CLIENT_CPUS:?Set QUERY_CLIENT_CPUS after sizing}"
+          memory: "${QUERY_CLIENT_MEMORY:?Set QUERY_CLIENT_MEMORY after sizing}"
+
+  # -------------------------------------------------------------------------
+  # profile: dashboard  — dedicated public EC2 node (optional)
+  # Runs user-dashboard-backend in isolation so it does not compete with an
+  # existing consumer on dashboard_updates_queue when "app" is deployed.
+  # Use this profile only if vm-app does NOT run the "app" profile.
+  # -------------------------------------------------------------------------
+  user-dashboard-backend-standalone:
+    profiles: [dashboard]
+    image: smarttraffic/user-dashboard-backend:local
+    <<: *rabbitmq-client
+    environment:
+      <<: *rabbitmq-environment
+      RABBITMQ_OAUTH_CLIENT_ID: "${RABBITMQ_DASHBOARD_CLIENT_ID:?Set RABBITMQ_DASHBOARD_CLIENT_ID}"
+      RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_DASHBOARD_CLIENT_SECRET:?Set RABBITMQ_DASHBOARD_CLIENT_SECRET}"
+      RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_DASHBOARD_OAUTH_SCOPE:?Set RABBITMQ_DASHBOARD_OAUTH_SCOPE}"
+      RABBITMQ_DASHBOARD_QUEUE: "${RABBITMQ_DASHBOARD_QUEUE:-dashboard_updates_queue}"
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: "8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "${DASHBOARD_CPUS:?Set DASHBOARD_CPUS after sizing}"
+          memory: "${DASHBOARD_MEMORY:?Set DASHBOARD_MEMORY after sizing}"

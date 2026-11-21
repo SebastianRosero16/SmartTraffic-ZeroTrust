@@ -1,16 +1,125 @@
 # AWS deployment workflow
 
-The five role-specific EC2 instances run separate Compose projects. Their
-Security Groups have no application ingress by default; services communicate
-over private addresses:
+The five role-specific EC2 instances all use the single canonical Compose file
+`infra/compose.yaml`. Each VM activates only its own profile; no VM runs
+services from another profile. Security Groups have no application ingress by
+default; services communicate over private addresses:
 
-| VM | Compose file | Services |
+| VM | Profile | Services |
 |---|---|---|
-| `vm-auth` | `infra/vm-auth/compose.yaml` | Auth Server |
-| `vm-data` | `infra/vm-data/compose.aws.yaml` | Kafka, RabbitMQ, PostgreSQL |
-| `vm-ingest` | `infra/vm-ingest/compose.yaml` | Traffic sensor simulator |
-| `vm-core` | `infra/vm-core/compose.yaml` | Traffic density processor, traffic archiver |
-| `vm-app` | `infra/vm-app/compose.yaml` | Dashboard backend, alert dispatcher, two query clients |
+| `vm-auth` | `auth` | Auth Server |
+| `vm-data` | `data` | Kafka, RabbitMQ, PostgreSQL |
+| `vm-ingest` | `ingest` | Traffic sensor simulator |
+| `vm-core` | `core` | Traffic density processor, traffic archiver |
+| `vm-app` | `app` | Dashboard backend, alert dispatcher, two query clients |
+
+A `dashboard` profile is also defined for an optional dedicated EC2 node that
+runs only the dashboard backend. Use it only when `vm-app` does **not** run the
+`app` profile; both consuming `dashboard_updates_queue` on the same RabbitMQ
+broker would split messages between two consumers.
+
+### Validating a profile locally
+
+Use `infra/.env.validation.example` (no real secrets) to check that the
+Compose configuration resolves for a given profile:
+
+```sh
+# From infra/
+docker compose --env-file .env.validation.example -f compose.yaml --profile auth    config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile data    config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile ingest  config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile core    config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile app     config --quiet
+docker compose --env-file .env.validation.example -f compose.yaml --profile dashboard config --quiet
+```
+
+### Migrating from per-VM Compose projects
+
+The old deployment used five separate Compose projects
+(`smarttraffic-vm-auth`, `smarttraffic-vm-data`, `smarttraffic-vm-ingest`,
+`smarttraffic-vm-core`, `smarttraffic-vm-app`). The canonical project is
+`smarttraffic`. Because all services use `network_mode: host`, both projects
+cannot run at the same time on the same VM: they would compete for the same
+ports.
+
+The cutover is a **manual step** that must happen before running Ansible.
+Ansible checks for running legacy projects and fails closed if it finds any.
+
+#### Cutover procedure (per VM, in order)
+
+> **Never use `docker compose down -v`**. The `-v` flag deletes named volumes
+> and would destroy Kafka, RabbitMQ, and PostgreSQL data. Use only `stop`.
+
+The commands below require the per-VM `.env` file that was used to start the
+legacy project. These files live in `SMARTTRAFFIC_SECRETS_DIR` on the operator
+machine and are copied to `/etc/smarttraffic/<vm>.env` on each VM by Ansible.
+Run these commands **on each VM** (via SSH or SSM session):
+
+```sh
+# On vm-ingest — stop the simulator first to avoid new data during cutover
+docker compose \
+  --file /opt/smarttraffic/infra/vm-ingest/compose.yaml \
+  --env-file /etc/smarttraffic/vm-ingest.env \
+  --project-name smarttraffic-vm-ingest \
+  stop
+
+# On vm-core
+docker compose \
+  --file /opt/smarttraffic/infra/vm-core/compose.yaml \
+  --env-file /etc/smarttraffic/vm-core.env \
+  --project-name smarttraffic-vm-core \
+  stop
+
+# On vm-app
+docker compose \
+  --file /opt/smarttraffic/infra/vm-app/compose.yaml \
+  --env-file /etc/smarttraffic/vm-app.env \
+  --project-name smarttraffic-vm-app \
+  stop
+
+# On vm-data — stop brokers after consumers are down
+docker compose \
+  --file /opt/smarttraffic/infra/vm-data/compose.aws.yaml \
+  --env-file /etc/smarttraffic/vm-data.env \
+  --project-name smarttraffic-vm-data \
+  stop
+
+# On vm-auth — stop last
+docker compose \
+  --file /opt/smarttraffic/infra/vm-auth/compose.yaml \
+  --env-file /etc/smarttraffic/vm-auth.env \
+  --project-name smarttraffic-vm-auth \
+  stop
+```
+
+Verify all legacy projects are stopped before running Ansible:
+
+```sh
+docker compose ls   # none of the smarttraffic-vm-* names should appear as running
+```
+
+Ansible will then start the canonical project (`smarttraffic`) with the
+appropriate profile per VM. If any legacy project is still running, Ansible
+fails with a message listing which projects to stop.
+
+#### Idempotence
+
+If Ansible is rerun after the canonical project is already running, `docker
+compose up --wait` is a no-op for containers that are already up. The legacy
+guard only checks for running legacy projects; it does not fail if they exist
+but are stopped.
+
+
+
+The following Compose files are kept separate because they exist only to
+support integration tests and local fixtures; they are not deployment files:
+
+- `infra/vm-data/postgres-it/compose.yaml` — spins up a disposable PostgreSQL
+  container for the archiver integration tests.
+- `infra/vm-data/rabbitmq/compose.yaml` — spins up a RabbitMQ container for
+  the OAuth integration tests.
+
+Ansible and production deployments never reference these files.
 
 Compose files use Linux host networking intentionally: each VM's nftables
 firewall can enforce the service-to-service policy directly. The dashboard

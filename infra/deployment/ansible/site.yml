@@ -348,6 +348,44 @@
           - compose
           - version
       changed_when: false
+    - name: Detect running containers from legacy per-VM Compose projects
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - ls
+          - --filter
+          - "status=running"
+          - --format
+          - json
+      register: smarttraffic_legacy_ls
+      changed_when: false
+      failed_when: false
+    - name: Identify which legacy projects are still running
+      ansible.builtin.set_fact:
+        smarttraffic_running_legacy: >-
+          {{
+            (smarttraffic_legacy_ls.stdout | default('[]') | from_json)
+            | map(attribute='Name')
+            | select('in', [
+                'smarttraffic-vm-auth',
+                'smarttraffic-vm-data',
+                'smarttraffic-vm-ingest',
+                'smarttraffic-vm-core',
+                'smarttraffic-vm-app'
+              ])
+            | list
+          }}
+    - name: Refuse to continue while legacy projects are running
+      ansible.builtin.assert:
+        that:
+          - smarttraffic_running_legacy | length == 0
+        fail_msg: >-
+          The following legacy Compose projects are still running on
+          {{ inventory_hostname }}: {{ smarttraffic_running_legacy | join(', ') }}.
+          Stop them manually before rerunning this playbook (never use down -v).
+          See infra/deployment/README.md for the full cutover procedure with
+          the exact --file and --env-file arguments for each VM.
     - name: Build this VM's Java service images
       ansible.builtin.command:
         argv:
@@ -435,7 +473,9 @@
           - --env-file
           - "/etc/smarttraffic/{{ smarttraffic_role }}.env"
           - --file
-          - "/opt/smarttraffic/{{ smarttraffic_compose_files[smarttraffic_role] }}"
+          - "/opt/smarttraffic/{{ smarttraffic_compose_file }}"
+          - --profile
+          - "{{ smarttraffic_compose_profiles[smarttraffic_role] }}"
           - config
           - --quiet
       changed_when: false
@@ -458,7 +498,9 @@
           - --env-file
           - /etc/smarttraffic/vm-auth.env
           - --file
-          - /opt/smarttraffic/infra/vm-auth/compose.yaml
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - auth
           - up
           - --detach
           - --no-build
@@ -472,7 +514,9 @@
           - --env-file
           - /etc/smarttraffic/vm-auth.env
           - --file
-          - /opt/smarttraffic/infra/vm-auth/compose.yaml
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - auth
           - restart
           - auth-server
       when: hostvars['vm-auth'].smarttraffic_mounted_config_copy.changed | default(false)
@@ -496,7 +540,9 @@
           - --env-file
           - /etc/smarttraffic/vm-data.env
           - --file
-          - /opt/smarttraffic/infra/vm-data/compose.aws.yaml
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - data
           - up
           - --detach
           - --no-build
@@ -512,7 +558,9 @@
       - --env-file
       - /etc/smarttraffic/vm-data.env
       - --file
-      - /opt/smarttraffic/infra/vm-data/compose.aws.yaml
+      - /opt/smarttraffic/infra/compose.yaml
+      - --profile
+      - data
       - exec
       - -T
       - kafka
@@ -665,7 +713,9 @@
           - --env-file
           - "/etc/smarttraffic/{{ smarttraffic_role }}.env"
           - --file
-          - "/opt/smarttraffic/{{ smarttraffic_compose_files[smarttraffic_role] }}"
+          - "/opt/smarttraffic/{{ smarttraffic_compose_file }}"
+          - --profile
+          - "{{ smarttraffic_compose_profiles[smarttraffic_role] }}"
           - up
           - --detach
           - --no-build
@@ -684,7 +734,9 @@
           - --env-file
           - /etc/smarttraffic/vm-ingest.env
           - --file
-          - /opt/smarttraffic/infra/vm-ingest/compose.yaml
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - ingest
           - up
           - --detach
           - --no-build
