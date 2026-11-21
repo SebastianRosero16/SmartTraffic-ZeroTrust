@@ -522,9 +522,9 @@
         fail_msg: >-
           The following legacy Compose projects are still running on
           {{ inventory_hostname }}: {{ smarttraffic_running_legacy | join(', ') }}.
-          Stop them manually before rerunning this playbook (never use down -v).
-          See infra/deployment/README.md for the full cutover procedure with
-          the exact --file and --env-file arguments for each VM.
+          Stop them with 'docker compose -p PROJECT stop' (never 'down -v') and
+          verify with 'docker compose ls' before rerunning this playbook.
+          Example: docker compose -p smarttraffic-vm-data stop
     - name: Build this VM's Java service images
       ansible.builtin.command:
         argv:

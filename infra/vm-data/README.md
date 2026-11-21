@@ -5,8 +5,8 @@ the canonical `infra/compose.yaml` under the `data` and `postgres` profiles.
 Activate them on `vm-data` with Ansible or directly:
 
 ```powershell
-docker compose --env-file /etc/smarttraffic/vm-data.env \
-  --file /opt/smarttraffic/infra/compose.yaml \
+docker compose --env-file /etc/smarttraffic/vm-data.env `
+  --file /opt/smarttraffic/infra/compose.yaml `
   --profile data up -d --no-build --wait
 ```
 
@@ -14,17 +14,17 @@ To provision the dashboard login database before Auth starts, use the
 `postgres` profile alone:
 
 ```powershell
-docker compose --env-file /etc/smarttraffic/vm-data.env \
-  --file /opt/smarttraffic/infra/compose.yaml \
+docker compose --env-file /etc/smarttraffic/vm-data.env `
+  --file /opt/smarttraffic/infra/compose.yaml `
   --profile postgres up -d --no-build --wait postgres
 ```
 
 To run the helper that provisions dashboard auth roles on an existing database:
 
 ```powershell
-docker compose --env-file /etc/smarttraffic/vm-data.env \
-  --file /opt/smarttraffic/infra/compose.yaml \
-  --profile data \
+docker compose --env-file /etc/smarttraffic/vm-data.env `
+  --file /opt/smarttraffic/infra/compose.yaml `
+  --profile data `
   exec -T postgres sh /docker-entrypoint-initdb.d/20-dashboard-auth-roles.sh
 ```
 
