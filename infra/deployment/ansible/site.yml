@@ -525,8 +525,9 @@
           Stop their containers without deleting volumes by running on that VM:
             docker ps --filter label=com.docker.compose.project=PROJECT --format '{{ '{{' }}.Names{{ '}}' }}'
             docker stop $(docker ps --filter label=com.docker.compose.project=PROJECT -q)
-          Replace PROJECT with each name listed above. Never use 'docker compose down -v'
-          or 'docker rm -v': both delete named volumes and would destroy persistent data.
+          Replace PROJECT with each name listed above. Never use 'docker compose down -v':
+          it deletes named volumes managed by Compose and would destroy persistent data.
+          'docker rm -v' deletes anonymous volumes only and is also unsafe here.
           Verify with 'docker compose ls' that none appear as running, then rerun.
     - name: Build this VM's Java service images
       ansible.builtin.command:
