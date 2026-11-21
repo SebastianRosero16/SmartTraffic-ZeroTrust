@@ -64,6 +64,65 @@
       loop: "{{ (smarttraffic_ebs_filesystem_types | default({})).get('results', []) }}"
       when: smarttraffic_role == "vm-data"
 
+- name: Guard against legacy per-VM Compose projects still running
+  hosts: smarttraffic
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  vars:
+    # Projects created by the old per-VM Compose files. The new canonical
+    # project is 'smarttraffic'; none of these names must be running when
+    # the canonical project starts because all services share network_mode:
+    # host and would collide on the same ports.
+    smarttraffic_legacy_projects:
+      - smarttraffic-vm-auth
+      - smarttraffic-vm-data
+      - smarttraffic-vm-ingest
+      - smarttraffic-vm-core
+      - smarttraffic-vm-app
+  tasks:
+    - name: Detect running containers from legacy Compose projects
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - ls
+          - --filter
+          - "status=running"
+          - --format
+          - json
+      register: smarttraffic_legacy_ls
+      changed_when: false
+      failed_when: false
+
+    - name: Identify which legacy projects are still running
+      ansible.builtin.set_fact:
+        smarttraffic_running_legacy: >-
+          {{
+            (smarttraffic_legacy_ls.stdout | default('[]') | from_json)
+            | map(attribute='Name')
+            | select('in', smarttraffic_legacy_projects)
+            | list
+          }}
+
+    - name: Refuse to continue while legacy projects are running
+      ansible.builtin.assert:
+        that:
+          - smarttraffic_running_legacy | length == 0
+        fail_msg: >-
+          The following legacy Compose projects are still running on
+          {{ inventory_hostname }}: {{ smarttraffic_running_legacy | join(', ') }}.
+          Stop them manually before rerunning this playbook.
+          Use 'docker compose -p PROJECT stop' (never 'down -v') to preserve
+          persistent volumes. Example for each project:
+            docker compose -p smarttraffic-vm-auth  stop
+            docker compose -p smarttraffic-vm-data  stop
+            docker compose -p smarttraffic-vm-ingest stop
+            docker compose -p smarttraffic-vm-core  stop
+            docker compose -p smarttraffic-vm-app   stop
+          Verify with 'docker compose ls' that none of them appear as running
+          before rerunning the playbook.
+
 - name: Install host firewall and runtime on all SmartTraffic VMs
   hosts: smarttraffic
   become: true

@@ -33,7 +33,58 @@ docker compose --env-file .env.validation.example -f compose.yaml --profile app 
 docker compose --env-file .env.validation.example -f compose.yaml --profile dashboard config --quiet
 ```
 
-### Test-only Compose files
+### Migrating from per-VM Compose projects
+
+The old deployment used five separate Compose projects
+(`smarttraffic-vm-auth`, `smarttraffic-vm-data`, `smarttraffic-vm-ingest`,
+`smarttraffic-vm-core`, `smarttraffic-vm-app`). The canonical project is
+`smarttraffic`. Because all services use `network_mode: host`, both projects
+cannot run at the same time on the same VM: they would compete for the same
+ports.
+
+The cutover is a **manual step** that must happen before running Ansible.
+Ansible checks for running legacy projects and fails closed if it finds any.
+
+#### Cutover procedure (per VM, in order)
+
+> **Never use `docker compose down -v`**. The `-v` flag deletes named volumes
+> and would destroy Kafka, RabbitMQ, and PostgreSQL data. Use only `stop`.
+
+```sh
+# On vm-ingest — stop the simulator first to avoid new data during cutover
+docker compose -p smarttraffic-vm-ingest stop
+
+# On vm-core
+docker compose -p smarttraffic-vm-core stop
+
+# On vm-app
+docker compose -p smarttraffic-vm-app stop
+
+# On vm-data — stop brokers after consumers are down
+docker compose -p smarttraffic-vm-data stop
+
+# On vm-auth — stop last
+docker compose -p smarttraffic-vm-auth stop
+```
+
+Verify all legacy projects are stopped before running Ansible:
+
+```sh
+docker compose ls   # none of the smarttraffic-vm-* names should appear as running
+```
+
+Ansible will then start the canonical project (`smarttraffic`) with the
+appropriate profile per VM. If any legacy project is still running, Ansible
+fails with a message listing which projects to stop.
+
+#### Idempotence
+
+If Ansible is rerun after the canonical project is already running, `docker
+compose up --wait` is a no-op for containers that are already up. The legacy
+guard only checks for running legacy projects; it does not fail if they exist
+but are stopped.
+
+
 
 The following Compose files are kept separate because they exist only to
 support integration tests and local fixtures; they are not deployment files:
