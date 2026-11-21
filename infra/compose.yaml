@@ -1,7 +1,8 @@
 # SmartTraffic – canonical Compose orchestration file
 #
-# Each service is defined once and tagged with the profile that matches
-# the VM it runs on.  Activate a single profile per host:
+# Each service is defined once and tagged with its deployment profile.
+# Activate the role profile for each host; vm-data also uses the postgres
+# bootstrap profile before Auth starts:
 #
 #   docker compose --profile auth   up -d --no-build --wait
 #   docker compose --profile data   up -d --no-build --wait
@@ -9,6 +10,9 @@
 #   docker compose --profile core   up -d --no-build --wait
 #   docker compose --profile app    up -d --no-build --wait
 #   docker compose --profile dashboard up -d --no-build --wait
+#
+# Start the database alone before Auth when provisioning the dashboard login:
+#   docker compose --profile postgres up -d --no-build --wait postgres
 #
 # Ansible passes --profile via the COMPOSE_PROFILES variable or the
 # --profile flag; it always supplies --env-file with the per-VM env file.
@@ -21,6 +25,17 @@
 # the ${VAR:?error message} form so a misconfigured launch fails fast.
 
 name: smarttraffic
+
+volumes:
+  kafka-data:
+    external: true
+    name: "${KAFKA_DATA_VOLUME_NAME:-smarttraffic-kafka-data}"
+  rabbitmq-data:
+    external: true
+    name: "${RABBITMQ_DATA_VOLUME_NAME:-smarttraffic-rabbitmq-data}"
+  postgres-data:
+    external: true
+    name: "${POSTGRES_DATA_VOLUME_NAME:-smarttraffic-postgres-data}"
 
 # ---------------------------------------------------------------------------
 # Shared extension: RabbitMQ client defaults used by vm-app services
@@ -60,6 +75,11 @@ services:
       SERVER_ADDRESS: 0.0.0.0
       SERVER_PORT: "443"
       SERVER_SSL_ENABLED: "true"
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+      SERVER_SERVLET_SESSION_COOKIE_NAME: SMARTTRAFFIC_AUTH_SESSION
+      SERVER_SERVLET_SESSION_COOKIE_SECURE: "true"
+      SERVER_SERVLET_SESSION_COOKIE_HTTP_ONLY: "true"
+      SERVER_SERVLET_SESSION_COOKIE_SAME_SITE: lax
       SERVER_SSL_KEY_STORE: /run/auth/tls/auth-server.p12
       SERVER_SSL_KEY_STORE_TYPE: PKCS12
       SERVER_SSL_KEY_STORE_PASSWORD: "${AUTH_TLS_KEYSTORE_PASSWORD:?Set AUTH_TLS_KEYSTORE_PASSWORD}"
@@ -67,6 +87,15 @@ services:
       SMARTTRAFFIC_AUTH_ISSUER: "${AUTH_ISSUER_URI:?Set AUTH_ISSUER_URI}"
       SMARTTRAFFIC_AUTH_PRIVATE_KEY_PATH: /run/auth/signing/private.pem
       SMARTTRAFFIC_AUTH_PUBLIC_KEY_PATH: /run/auth/signing/public.pem
+      AUTH_DB_URL: "${AUTH_DB_URL:?Set AUTH_DB_URL to a TLS-verified PostgreSQL URL}"
+      AUTH_DB_USER: "${AUTH_DB_USER:?Set AUTH_DB_USER}"
+      AUTH_DB_PASSWORD: "${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD}"
+      AUTH_DB_MIGRATOR_USER: "${AUTH_DB_MIGRATOR_USER:?Set AUTH_DB_MIGRATOR_USER}"
+      AUTH_DB_MIGRATOR_PASSWORD: "${AUTH_DB_MIGRATOR_PASSWORD:?Set AUTH_DB_MIGRATOR_PASSWORD}"
+      DASHBOARD_OAUTH_CLIENT_ID: "${DASHBOARD_OAUTH_CLIENT_ID:?Set DASHBOARD_OAUTH_CLIENT_ID}"
+      DASHBOARD_OAUTH_CLIENT_SECRET: "${DASHBOARD_OAUTH_CLIENT_SECRET:?Set DASHBOARD_OAUTH_CLIENT_SECRET}"
+      DASHBOARD_OAUTH_REDIRECT_URI: "${DASHBOARD_OAUTH_REDIRECT_URI:?Set DASHBOARD_OAUTH_REDIRECT_URI}"
+      DASHBOARD_AUTH_USERNAME: "${DASHBOARD_AUTH_USERNAME:?Set DASHBOARD_AUTH_USERNAME}"
     volumes:
       - type: bind
         source: "${AUTH_TLS_DIR:?Set AUTH_TLS_DIR to a protected host directory}"
@@ -80,6 +109,12 @@ services:
         source: "${AUTH_RUNTIME_CONFIG_DIR:?Set AUTH_RUNTIME_CONFIG_DIR to a protected host directory}"
         target: /run/auth/config
         read_only: true
+      - type: bind
+        source: "${AUTH_DB_TLS_CA_DIR:?Set AUTH_DB_TLS_CA_DIR to the PostgreSQL CA directory}"
+        target: /run/auth/db-tls
+        read_only: true
+        bind:
+          create_host_path: false
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -157,11 +192,7 @@ services:
       KAFKA_SSL_KEYSTORE_TYPE: PKCS12
       KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
     volumes:
-      - type: bind
-        source: /srv/smarttraffic/kafka
-        target: /var/lib/kafka/data
-        bind:
-          create_host_path: false
+      - kafka-data:/var/lib/kafka/data
       - type: bind
         source: "${KAFKA_TLS_DIR:?Set KAFKA_TLS_DIR to a protected host directory}"
         target: /etc/kafka/secrets
@@ -209,11 +240,7 @@ services:
         source: "${RABBITMQ_TLS_DIR:?Set RABBITMQ_TLS_DIR to a protected host directory}"
         target: /etc/rabbitmq/certs
         read_only: true
-      - type: bind
-        source: /srv/smarttraffic/rabbitmq
-        target: /var/lib/rabbitmq
-        bind:
-          create_host_path: false
+      - rabbitmq-data:/var/lib/rabbitmq
     cap_drop:
       - ALL
     security_opt:
@@ -231,21 +258,43 @@ services:
           memory: "${RABBITMQ_MEMORY:?Set RABBITMQ_MEMORY after sizing}"
 
   postgres:
-    profiles: [data]
+    profiles: [data, postgres]
     image: postgres:17-alpine
     restart: unless-stopped
     network_mode: host
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/postgresql/tls/server.crt
+      - -c
+      - ssl_key_file=/etc/postgresql/tls/server.key
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
     environment:
       POSTGRES_DB: "${POSTGRES_DB:-smarttraffic}"
       POSTGRES_USER: "${POSTGRES_ADMIN_USER:?Set POSTGRES_ADMIN_USER}"
       POSTGRES_PASSWORD: "${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD}"
       APP_DB_USER: "${POSTGRES_APP_USER:?Set POSTGRES_APP_USER}"
       APP_DB_PASSWORD: "${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD}"
+      AUTH_DB_USER: "${AUTH_DB_USER:?Set AUTH_DB_USER}"
+      AUTH_DB_PASSWORD: "${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD}"
+      AUTH_DB_MIGRATOR_USER: "${AUTH_DB_MIGRATOR_USER:?Set AUTH_DB_MIGRATOR_USER}"
+      AUTH_DB_MIGRATOR_PASSWORD: "${AUTH_DB_MIGRATOR_PASSWORD:?Set AUTH_DB_MIGRATOR_PASSWORD}"
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
+      - postgres-data:/var/lib/postgresql/data
       - type: bind
-        source: /srv/smarttraffic/postgres
-        target: /var/lib/postgresql/data
+        source: "${POSTGRES_TLS_DIR:?Set POSTGRES_TLS_DIR to the PostgreSQL server TLS files}"
+        target: /etc/postgresql/tls
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/smarttraffic/postgres/pg_hba.conf
+        target: /etc/postgresql/pg_hba.conf
+        read_only: true
         bind:
           create_host_path: false
       - type: bind
@@ -421,6 +470,15 @@ services:
       RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_DASHBOARD_CLIENT_SECRET:?Set RABBITMQ_DASHBOARD_CLIENT_SECRET}"
       RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_DASHBOARD_OAUTH_SCOPE:?Set RABBITMQ_DASHBOARD_OAUTH_SCOPE}"
       RABBITMQ_DASHBOARD_QUEUE: "${RABBITMQ_DASHBOARD_QUEUE:-dashboard_updates_queue}"
+      AUTH_ISSUER_URI: "${AUTH_ISSUER_URI:?Set HTTPS AUTH_ISSUER_URI}"
+      DASHBOARD_OAUTH_CLIENT_ID: "${DASHBOARD_OAUTH_CLIENT_ID:?Set DASHBOARD_OAUTH_CLIENT_ID}"
+      DASHBOARD_OAUTH_CLIENT_SECRET: "${DASHBOARD_OAUTH_CLIENT_SECRET:?Set DASHBOARD_OAUTH_CLIENT_SECRET}"
+      SESSION_COOKIE_SECURE: "true"
+      SERVER_SERVLET_SESSION_COOKIE_NAME: SMARTTRAFFIC_DASHBOARD_SESSION
+      JAVA_TOOL_OPTIONS: >-
+        -Djavax.net.ssl.trustStore=/run/certs/auth-truststore.p12
+        -Djavax.net.ssl.trustStorePassword=${AUTH_TLS_TRUSTSTORE_PASSWORD:?Set AUTH_TLS_TRUSTSTORE_PASSWORD}
+        -Djavax.net.ssl.trustStoreType=PKCS12
       SERVER_ADDRESS: 0.0.0.0
       SERVER_PORT: "8080"
     deploy:
@@ -508,6 +566,15 @@ services:
       RABBITMQ_OAUTH_CLIENT_SECRET: "${RABBITMQ_DASHBOARD_CLIENT_SECRET:?Set RABBITMQ_DASHBOARD_CLIENT_SECRET}"
       RABBITMQ_OAUTH_SCOPE: "${RABBITMQ_DASHBOARD_OAUTH_SCOPE:?Set RABBITMQ_DASHBOARD_OAUTH_SCOPE}"
       RABBITMQ_DASHBOARD_QUEUE: "${RABBITMQ_DASHBOARD_QUEUE:-dashboard_updates_queue}"
+      AUTH_ISSUER_URI: "${AUTH_ISSUER_URI:?Set HTTPS AUTH_ISSUER_URI}"
+      DASHBOARD_OAUTH_CLIENT_ID: "${DASHBOARD_OAUTH_CLIENT_ID:?Set DASHBOARD_OAUTH_CLIENT_ID}"
+      DASHBOARD_OAUTH_CLIENT_SECRET: "${DASHBOARD_OAUTH_CLIENT_SECRET:?Set DASHBOARD_OAUTH_CLIENT_SECRET}"
+      SESSION_COOKIE_SECURE: "true"
+      SERVER_SERVLET_SESSION_COOKIE_NAME: SMARTTRAFFIC_DASHBOARD_SESSION
+      JAVA_TOOL_OPTIONS: >-
+        -Djavax.net.ssl.trustStore=/run/certs/auth-truststore.p12
+        -Djavax.net.ssl.trustStorePassword=${AUTH_TLS_TRUSTSTORE_PASSWORD:?Set AUTH_TLS_TRUSTSTORE_PASSWORD}
+        -Djavax.net.ssl.trustStoreType=PKCS12
       SERVER_ADDRESS: 0.0.0.0
       SERVER_PORT: "8080"
     deploy:

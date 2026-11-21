@@ -11,6 +11,13 @@ five-machine SmartTraffic deployment:
 | `vm-core` | Traffic density processor and traffic archiver |
 | `vm-app` | Dashboard backend and web application |
 
+The public dashboard edge is a separately provisioned sixth EC2 instance; it
+is not managed by this five-role Terraform module. As of 21 November 2026, the
+operator reports its current public IPv4 as `3.148.199.141`. It is dynamic,
+so keep the instance running for the Monday demo and review Elastic IP costs
+before assigning a stable address. Do not expect Terraform to manage the
+edge, its Nginx configuration, or its Security Group.
+
 ## Safety status
 
 The Terraform module is deliberately disabled by default:
@@ -46,14 +53,19 @@ The Terraform module is deliberately disabled by default:
   finished with 0 to add, 0 to change, and 68 to destroy: the example sets
   `enable_resource_creation = false` while the state contains managed
   resources. Do not apply this plan. No AWS resources were modified.
-- The five live Security Groups each allow TCP 443 to `0.0.0.0/0`, described
-  as temporary HTTPS egress. Other egress is role-scoped: `vm-data` to Auth
+- The five workload Security Groups each allow TCP 443 to `0.0.0.0/0`,
+  described as temporary HTTPS egress. Other egress is role-scoped: `vm-data` to Auth
   443 and DNS; `vm-ingest` to Auth 443 and `vm-data` 9092 plus DNS; `vm-core`
   to Auth 443 and `vm-data` 9092/5672/5432 plus DNS; `vm-app` to Auth 443 and
   `vm-data` 5672 plus DNS; `vm-auth` to DNS. `nftables` on all five VMs uses
   default-drop policies, with TCP 443 permitted to destinations outside the
   VPC CIDR. This is observed configuration, not approval of unrestricted
   HTTPS egress.
+- The separately managed dashboard-edge Security Group was created outside
+  Terraform with public TCP 80/443 ingress. Before enabling login, verify
+  edge egress to private `vm-app:8080` and `vm-auth:443`, and target ingress
+  from the edge Security Group only. Never open backend port 8080 to the
+  Internet.
 - The shared EC2 role attaches `AmazonSSMManagedInstanceCore` and is assigned
   to all five instances through an instance profile. An SSM port-forward from
   the presenter's laptop to `vm-app` succeeded; the IAM policy's exact resource

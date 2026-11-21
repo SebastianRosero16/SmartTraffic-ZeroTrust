@@ -4,8 +4,9 @@
 
 Esta matriz complementa el
 [overview de arquitectura](./architecture-overview.md) y el
-[README](../README.md). Describe flujos lógicos previstos, no reglas `nftables`
-ya implementadas. No asigna direcciones IP, puertos ni reglas definitivas.
+[README](../README.md). Describe flujos lógicos previstos y evidencia observada; no sustituye la
+validación de reglas `nftables` y Security Groups en AWS. Las direcciones IP
+concretas se mantienen fuera del repositorio.
 
 Es importante distinguir:
 
@@ -22,6 +23,43 @@ pendientes. La inclusión de un flujo no significa que se haya configurado o
 probado. En particular, el uso de Kafka/RabbitMQ y sus mecanismos de
 autenticación indicados abajo es obligatorio; nombres y parámetros concretos
 solo lo son si el enunciado los fija.
+
+## Publicación pública del dashboard
+
+La EC2 `smarttraffic-dashboard-public` es una capa de borde adicional; no
+reemplaza ninguna de las cinco VM del proyecto. Nginx termina la conexión
+pública y reenvía HTTP y WebSocket al backend de `vm-app` por la VPC. El
+backend continúa siendo el único consumidor de `dashboard_updates_queue`, y
+la EC2 pública no recibe credenciales OAuth ni acceso a RabbitMQ. El borde
+actual tampoco publica rutas hacia Auth; habilitar el login requiere un proxy
+HTTPS explícito y restringido hacia `vm-auth`.
+
+El flujo requerido es Internet → EC2 de borde TCP 80/443 y EC2 de borde →
+`vm-app` TCP 8080. En `vm-app`, tanto el Security Group como `nftables` deben
+restringir TCP 8080 a la EC2 de borde; nunca se debe abrir ese puerto a
+Internet. HTTPS requiere un certificado válido. Para la demo se puede usar un
+certificado IP de Let's Encrypt (vida de 160 horas) en la IP pública actual,
+con renovación automática; un dominio no es obligatorio. La plantilla y el
+runner están preparados localmente, pero aún no se han aplicado en AWS.
+Mientras el puerto 443 siga cerrado, HTTP solo sirve como validación temporal
+y no debe usarse para contraseñas.
+
+Para el login, el navegador usa el mismo origen HTTPS de la IP pública; Nginx
+envía las rutas OIDC al Auth Server privado y el callback vuelve al BFF.
+Internamente, los servicios conservan sus endpoints privados hacia Auth.
+`vm-auth` se conecta a PostgreSQL en `vm-data:5432` con TLS y validación de
+hostname; `nftables` y `pg_hba.conf` limitan ese acceso a `vm-auth`. La
+configuración de Compose/Ansible refleja el flujo previsto, pero no se ha
+desplegado ni validado en AWS.
+
+**Validación inicial (20 de noviembre de 2026):** desde Internet, `GET
+/dashboard.html` respondió HTTP 200 y `/ws/traffic` completó el handshake
+WebSocket con HTTP 101. La EC2 de borde permite entrada pública solo por TCP
+80; TCP 443 permanece cerrado. Su egreso está limitado a DNS/NTP, TCP 443 a
+`0.0.0.0/0` para Systems Manager y TCP 8080 al Security Group de `vm-app`. El backend respondió
+HTTP 200 desde la EC2 de borde. Esta prueba confirma la ruta funcional, no TLS
+ni una publicación apta para producción. La IP actual es `3.148.199.141`;
+los endpoints HTTPS aún no se han habilitado y no se debe enviar una contraseña.
 
 **Estado de revisión al 17 de noviembre de 2026:** la demostración se abrió
 desde el portátil mediante Session Manager; el túnel llegó al listener local
@@ -41,6 +79,8 @@ La revisión posterior encontró reglas activas por rol que no figuran como
 configuración predeterminada: `vm-auth` recibe HTTPS TCP 443 desde los otros
 grupos; `vm-data` recibe PostgreSQL 5432, RabbitMQ 5672 y Kafka 9092 desde
 grupos específicos; `vm-app` no tiene entrada pública y usa el túnel SSM.
+La configuración local actualizada añade `vm-auth` como cliente PostgreSQL
+TLS previsto; esto aún no forma parte de una regla AWS reconciliada.
 `vm-core` e `vm-ingest` no tienen reglas de entrada. Todos los grupos revisados
 permiten HTTPS 443 temporal a `0.0.0.0/0`. Esto es el estado observado en
 Security Groups, no una configuración formalmente confirmada en el repositorio.
@@ -169,7 +209,7 @@ commit que se presentará.
 | Procesador → RabbitMQ | `traffic_density_processor` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: procesador → exchange `traffic_updates`. | RabbitMQ con `rabbitmq_auth_backend_oauth2` por AMQPS; puerto por definir. | Publicar estados calculados para consumidores independientes. | Publicador OAuth2/AMQPS en el checkout; requiere permiso de escritura al exchange. Topología/ACL, IP y puerto de producción pendientes; la prueba aislada no define producción. |
 | RabbitMQ → backend del dashboard | `user_dashboard_backend` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → backend, desde `dashboard_updates_queue` por defecto. | RabbitMQ con `rabbitmq_auth_backend_oauth2`; AMQPS configurado por el cliente. | Entregar actualizaciones para presentación. | La demo AWS mostró el dashboard conectado y con mediciones en vivo. No se verificaron la cola, ACL, listener ni el commit desplegado; la ejecución no sustituye esa revisión. |
 | RabbitMQ → dispatcher de alertas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Actualizaciones: RabbitMQ → dispatcher, desde una cola de alertas. | Diseño OAuth2/AMQPS; puerto productivo por confirmar. | Actualizar la réplica local y registrar transiciones como alertas. | La demo AWS mostró transiciones de alertas (ver README). El cambio local aún no está publicado y no se identificó el commit desplegado ni se revisó la política de autorización efectiva. |
-| Backend → dashboard web | El navegador que carga `dashboard.html` abre la conexión WebSocket hacia `user_dashboard_backend`. | Actualizaciones: backend → navegador. | WebSocket same-origin en `/ws/traffic`; `ws` o `wss` según el esquema HTTP del backend. | Presentar tráfico en tiempo real. | Verificado en la demo AWS por el túnel SSM: el navegador mostró conexión y mediciones que avanzaban. El puerto remoto observado fue `8080`. Se inspeccionaron Security Groups y `nftables`; `vm-app` no tenía ingress y la cadena input de `nftables` aplica `drop` por defecto. No se probó exposición pública. |
+| Backend → dashboard web | El navegador carga el dashboard por la EC2 de borde, que reenvía a `user_dashboard_backend` en `vm-app`; las actualizaciones vuelven por WebSocket. | Actualizaciones: backend → navegador. | `/ws/traffic` same-origin; actualmente `ws` por HTTP, previsto `wss` bajo HTTPS. | Presentar tráfico en tiempo real. | Verificado el 20 de noviembre: Internet → Nginx HTTP 200/WS 101 y edge → `vm-app:8080` privado. `vm-app` permite solo el edge por Security Group/nftables. TCP 443 de borde sigue cerrado; la ruta HTTPS todavía no está desplegada. |
 | Cliente de consulta → RabbitMQ | Cada cliente `query_client` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: cliente → cola de solicitudes; incluye zonas, `requestId`, `correlationId`, `instanceId` y `replyTo`. | Diseño OAuth2/AMQPS; puerto productivo por confirmar. | Enviar consultas asíncronas y esperar respuestas. | La demo AWS mostró respuestas de consulta. El código local aún no está publicado; el commit desplegado, la cola y la autorización efectiva no se verificaron. |
 | RabbitMQ → dispatcher de consultas | El consumidor `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Solicitud: RabbitMQ → dispatcher, desde la cola de solicitudes. | Diseño OAuth2/AMQPS; puerto productivo por confirmar. | Entregar consulta para responder desde la réplica local. | Las respuestas observadas en la demo indican que el flujo funcional operó; no se identificó el commit desplegado ni se revisaron cola y permisos efectivos. |
 | Dispatcher → RabbitMQ | `alert_dispatcher` abre conexión hacia RabbitMQ en `vm-data`. | Respuesta: dispatcher → exchange de respuestas, con `correlationId` y routing key de instancia. | Diseño OAuth2/AMQPS; puerto productivo por confirmar. | Publicar la respuesta confirmada para una instancia. | Las respuestas observadas en la demo indican que el flujo funcional operó; el exchange, bindings y permisos efectivos no se revisaron. |
@@ -189,7 +229,7 @@ de producción.
 | Auth Server — JWKS | Kafka y RabbitMQ pueden iniciar conexiones HTTPS salientes al JWKS configurado; no es una conexión iniciada por Auth Server por cada mensaje. Kafka también puede solicitar token para la identidad interbroker cuando su configuración lo requiera. | Pendiente en producción: endpoint, puerto, CA y ruta permitida desde `vm-data` a `vm-auth`. | El Auth Server expone `/oauth2/jwks` cuando RSA está configurado. El fixture Kafka documenta validación de firma, audience e issuer mediante JWKS. Los brokers deben confiar en HTTPS de Auth Server; esto no aprueba endpoints productivos. |
 | RabbitMQ | Clientes configuran `RABBITMQ_HOST`/`RABBITMQ_PORT` y usan AMQPS, validando certificado y hostname del broker. La consulta JWKS del broker es HTTPS independiente. | `5672` observado como listener del host; RabbitMQ informa `amqp/ssl`. | Contenedor `rabbitmq:4.3.7` activo. `rabbitmq-diagnostics listeners` confirmó AMQP sobre TLS. La CA PEM de `traffic-density-processor` y de los cuatro clientes de `vm-app` coincide por huella con la raíz servida. El certificado del broker incluye SAN para `10.42.2.7`, `rabbitmq`, `vm-data` y `localhost`; el código local activa hostname verification. La consulta de certificados no demuestra operaciones AMQPS exitosas ni validación efectiva por cada cliente. El fixture usa `5671` y `8443` solo para pruebas. |
 | PostgreSQL | El archivador usa `SPRING_DATASOURCE_URL` JDBC. | `5432` observado en todas las interfaces del host; `SHOW ssl` dentro del contenedor devolvió `off`, por lo que PostgreSQL no ofrece TLS actualmente. | Contenedor `postgres:17-alpine` activo. El fixture de integración publica `127.0.0.1:5433` hacia `5432` del contenedor; ambos son datos de prueba local. |
-| Backend del dashboard | `SERVER_PORT` tiene default HTTP de desarrollo `8080`; el navegador usa HTTP/WebSocket same-origin en `/ws/traffic`. | `127.0.0.1:8080` observado en `vm-app`; `curl` HTTP devolvió 302 a `/dashboard.html` y HTTPS/TLS falló con `wrong version number`. Se alcanzó mediante el túnel SSM, no por ingress público. | El backend no negocia TLS directamente en 8080. La demo mostró conexión y mediciones. La terminación TLS pública no se ha aprobado. `nftables` de las cinco VM tiene política input `drop`; la configuración de HTTPS saliente debe revisarse por su alcance fuera del CIDR de la VPC. |
+| Backend del dashboard | `SERVER_PORT` tiene default HTTP de desarrollo `8080`; el navegador llega mediante Nginx al backend por `/` y `/ws/traffic`. | `0.0.0.0:8080` en `vm-app`, restringido al edge por Security Group y `nftables`; HTTPS/TLS termina en Nginx. | El backend no negocia TLS directamente en 8080. HTTP público y WebSocket 200/101 fueron verificados; la terminación TLS aún no está aplicada. `nftables` de las cinco VM tiene política input `drop`; la configuración de HTTPS saliente debe revisarse por su alcance fuera del CIDR de la VPC. |
 Para tráfico entre VMs, no usar `kafka`, `localhost` ni alias de una red Docker
 como destino. El listener Kafka debe anunciar un nombre o dirección privada
 alcanzable y coherente con el SAN del certificado; el listener de control KRaft
@@ -240,6 +280,7 @@ configuración/plugin.
 
 | Flujo | Iniciador de conexión de red | Sentido lógico del mensaje | Servicio / protocolo conocido | Propósito | Estado |
 |---|---|---|---|---|---|
+| Navegador → dashboard/Auth | El navegador abre el origen HTTPS de la EC2 de borde; Nginx enruta por ruta entre `vm-app` y `vm-auth`. | Login: navegador ↔ Auth; callback: Auth → navegador → BFF. | HTTPS con certificado IP; Authorization Code + PKCE; callback `/login/oauth2/code/dashboard`. | Autenticar la única cuenta y crear sesión de servidor para el dashboard y WebSocket. | Código, rutas Nginx y renovación automática están preparados en el checkout; certbot, TCP 443, reglas de `vm-auth` y login no están aún desplegados en AWS. No usar la URL HTTP para contraseñas. |
 | Servicio → `auth_server` (solicitud de token) | Cada servicio con cliente OAuth abre conexión hacia `auth_server` en `vm-auth`. | Solicitud OAuth y credenciales: servicio → Auth Server. | HTTPS OAuth `client_credentials`/`client_secret_basic`, endpoint `/oauth2/token`; puerto por definir. | Autenticar la identidad de servicio y solicitar JWT. | El flujo y endpoint están implementados/documentados; host, puerto, TLS/CA, identidades, issuer y audiencias productivos siguen pendientes. |
 | `auth_server` → servicio (respuesta de token) | Ocurre en la conexión iniciada por el servicio; no es una conexión nueva desde Auth Server. | JWT emitido: Auth Server → servicio. | Respuesta HTTPS del token endpoint. | Entregar el JWT al cliente autenticado. | Respuesta en la misma conexión. Claims, política final de issuer/audiencias y transporte productivo deben aprobarse. |
 | Kafka → Auth Server (JWKS) | El broker Kafka abre conexión saliente a `auth_server` en `vm-auth` para consultar JWKS; el retorno ocurre en esa conexión. | Petición de claves: Kafka → Auth Server; respuesta: Auth Server → Kafka. | HTTPS al endpoint JWKS `/oauth2/jwks` cuando RSA está configurado; puerto por definir. | Obtener claves públicas para validar JWT. | Configurado por el fixture Kafka; ruta, TLS/CA y endpoint productivos pendientes. |

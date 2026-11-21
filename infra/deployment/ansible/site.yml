@@ -17,18 +17,124 @@
         fail_msg: >-
           Set the checkout/secrets paths, Terraform private IP outputs, VPC
           CIDR, resolver address, and operator SSH key before deployment.
-    - name: Require prepared EBS data volumes before vm-data deployment
+    - name: Inspect per-role environment keys without logging values
+      ansible.builtin.set_fact:
+        smarttraffic_missing_env_keys: >-
+          {{
+            (
+              lookup(
+                'ansible.builtin.file',
+                smarttraffic_checkout ~ '/' ~ smarttraffic_env_examples[smarttraffic_role]
+              )
+              | regex_findall('(?m)^([A-Za-z_][A-Za-z0-9_]*)=')
+            )
+            | difference(
+                lookup(
+                  'ansible.builtin.file',
+                  smarttraffic_secrets_source ~ '/' ~ smarttraffic_env_files[smarttraffic_role]
+                )
+                | regex_findall('(?m)^([A-Za-z_][A-Za-z0-9_]*)=')
+              )
+          }}
+        smarttraffic_placeholder_env_keys: >-
+          {{
+            lookup(
+              'ansible.builtin.file',
+              smarttraffic_secrets_source ~ '/' ~ smarttraffic_env_files[smarttraffic_role]
+            )
+            | regex_findall('(?m)^([A-Za-z_][A-Za-z0-9_]*)=(REPLACE_WITH.*|<[^>]+>)')
+          }}
+      no_log: true
+    - name: Require complete per-role environment without placeholders
+      ansible.builtin.assert:
+        that:
+          - smarttraffic_missing_env_keys | length == 0
+          - smarttraffic_placeholder_env_keys | length == 0
+        fail_msg: >-
+          The protected environment file for {{ smarttraffic_role }} is
+          incomplete or still contains placeholders. Reconcile it with its
+          role-specific .env example before deployment.
+    - name: Require prepared vm-data storage configuration
       ansible.builtin.assert:
         that:
           - smarttraffic_data_cutover_confirmed | default(false) | bool
+          - (smarttraffic_data_storage_mode | default('ebs')) in ['ebs', 'docker_named_volumes']
           - ((smarttraffic_data_volumes | default({})).keys() | list | sort) == ['kafka', 'postgres', 'rabbitmq']
+          - (smarttraffic_data_volumes | default({})).get('postgres', {}).get('volume_name', '') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - (smarttraffic_data_volumes | default({})).get('kafka', {}).get('volume_name', '') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - (smarttraffic_data_volumes | default({})).get('rabbitmq', {}).get('volume_name', '') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+        fail_msg: >-
+          Set the vm-data storage mode and volume names, verify the backup, and
+          confirm the data cutover in the ignored inventory.
+      when: smarttraffic_role == "vm-data"
+    - name: Require valid EBS data volume IDs in EBS mode
+      ansible.builtin.assert:
+        that:
           - (smarttraffic_data_volumes | default({})).get('postgres', {}).get('volume_id', '') is match('^vol-[0-9a-f]{8,}$')
           - (smarttraffic_data_volumes | default({})).get('kafka', {}).get('volume_id', '') is match('^vol-[0-9a-f]{8,}$')
           - (smarttraffic_data_volumes | default({})).get('rabbitmq', {}).get('volume_id', '') is match('^vol-[0-9a-f]{8,}$')
         fail_msg: >-
-          Set the vm-data EBS volume IDs and confirm the manual backup and data
-          cutover in the ignored inventory. This playbook never formats disks.
-      when: smarttraffic_role == "vm-data"
+          Set and verify all three vm-data EBS volume IDs before using EBS
+          storage mode.
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
+    - name: Inspect existing Docker data volumes
+      ansible.builtin.command:
+        argv:
+          - docker
+          - volume
+          - inspect
+          - "{{ item.value.volume_name }}"
+      loop: "{{ smarttraffic_data_volumes | default({}) | dict2items }}"
+      register: smarttraffic_docker_data_volume_inspections
+      changed_when: false
+      failed_when: false
+      become: true
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'docker_named_volumes'
+    - name: Require all configured Docker data volumes to exist
+      ansible.builtin.assert:
+        that:
+          - item.rc == 0
+          - (item.stdout | from_json | first).Name == item.item.value.volume_name
+          - ((item.stdout | from_json | first).Mountpoint | default('')) is match('^/')
+        fail_msg: >-
+          The configured Docker data volume {{ item.item.value.volume_name }}
+          is missing or has no valid mountpoint. Nothing was recreated.
+      loop: "{{ (smarttraffic_docker_data_volume_inspections | default({})).get('results', []) }}"
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'docker_named_volumes'
+    - name: Inspect existing EBS-backed Docker volume aliases
+      ansible.builtin.command:
+        argv:
+          - docker
+          - volume
+          - inspect
+          - "{{ item.value.volume_name }}"
+      loop: "{{ smarttraffic_data_volumes | default({}) | dict2items }}"
+      register: smarttraffic_ebs_docker_volume_inspections
+      changed_when: false
+      failed_when: false
+      become: true
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
+    - name: Refuse EBS-backed Docker volumes with different mount options
+      ansible.builtin.assert:
+        that:
+          - item.rc != 0 or ((item.stdout | from_json | first).Options | default({}, true)).get('device', '') == item.item.value.mountpoint
+          - item.rc != 0 or ((item.stdout | from_json | first).Options | default({}, true)).get('o', '') == 'bind'
+          - item.rc != 0 or ((item.stdout | from_json | first).Options | default({}, true)).get('type', '') == 'none'
+        fail_msg: >-
+          The existing Docker volume {{ item.item.value.volume_name }} does not
+          point at its configured EBS mountpoint; it will not be reused.
+      loop: "{{ (smarttraffic_ebs_docker_volume_inspections | default({})).get('results', []) }}"
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
     - name: Wait for attached vm-data EBS devices
       ansible.builtin.wait_for:
         path: "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ item.value.volume_id | replace('-', '') }}"
@@ -36,7 +142,9 @@
         timeout: 60
       loop: "{{ smarttraffic_data_volumes | default({}) | dict2items }}"
       become: true
-      when: smarttraffic_role == "vm-data"
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
     - name: Detect existing filesystems on vm-data EBS devices
       ansible.builtin.command:
         argv:
@@ -51,7 +159,9 @@
       changed_when: false
       failed_when: false
       become: true
-      when: smarttraffic_role == "vm-data"
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
     - name: Refuse unformatted or unsupported vm-data EBS devices
       ansible.builtin.assert:
         that:
@@ -62,7 +172,9 @@
           filesystem. Verify its volume ID and prepare it manually; Ansible
           never formats disks.
       loop: "{{ (smarttraffic_ebs_filesystem_types | default({})).get('results', []) }}"
-      when: smarttraffic_role == "vm-data"
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
 
 - name: Install host firewall and runtime on all SmartTraffic VMs
   hosts: smarttraffic
@@ -141,7 +253,9 @@
         group: root
         mode: "0755"
       loop: "{{ smarttraffic_data_volumes | default({}) | dict2items }}"
-      when: smarttraffic_role == "vm-data"
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
     - name: Mount vm-data EBS filesystems persistently
       ansible.posix.mount:
         src: "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ item.item.value.volume_id | replace('-', '') }}"
@@ -152,7 +266,9 @@
         passno: "{{ '2' if item.stdout == 'ext4' else '0' }}"
         state: mounted
       loop: "{{ (smarttraffic_ebs_filesystem_types | default({})).get('results', []) }}"
-      when: smarttraffic_role == "vm-data"
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
     - name: Set vm-data volume-root permissions for container users
       ansible.builtin.file:
         path: "{{ item.value.mountpoint }}"
@@ -161,7 +277,30 @@
         group: "{{ item.value.group }}"
         mode: "{{ item.value.mode }}"
       loop: "{{ smarttraffic_data_volumes | default({}) | dict2items }}"
-      when: smarttraffic_role == "vm-data"
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
+    - name: Create EBS-backed Docker data volumes when absent
+      ansible.builtin.command:
+        argv:
+          - docker
+          - volume
+          - create
+          - --driver
+          - local
+          - --opt
+          - type=none
+          - --opt
+          - o=bind
+          - --opt
+          - "device={{ item.item.value.mountpoint }}"
+          - "{{ item.item.value.volume_name }}"
+      loop: "{{ (smarttraffic_ebs_docker_volume_inspections | default({})).get('results', []) }}"
+      when:
+        - smarttraffic_role == "vm-data"
+        - smarttraffic_data_storage_mode | default('ebs') == 'ebs'
+        - item.rc != 0
+      changed_when: true
     - name: Create deployment directories
       ansible.builtin.file:
         path: "{{ item }}"
@@ -465,11 +604,51 @@
           - "{}"
           - +
       changed_when: true
+    - name: Set PostgreSQL TLS directory permissions for its container user
+      ansible.builtin.file:
+        path: /etc/smarttraffic/secrets/vm-data/postgres-tls
+        state: directory
+        owner: root
+        group: "70"
+        mode: "0750"
+      when: smarttraffic_role == "vm-data"
+    - name: Set PostgreSQL server certificate permissions
+      ansible.builtin.file:
+        path: /etc/smarttraffic/secrets/vm-data/postgres-tls/server.crt
+        owner: root
+        group: "70"
+        mode: "0440"
+      when: smarttraffic_role == "vm-data"
+    - name: Set PostgreSQL private key permissions
+      ansible.builtin.file:
+        path: /etc/smarttraffic/secrets/vm-data/postgres-tls/server.key
+        owner: "70"
+        group: "70"
+        mode: "0600"
+      when: smarttraffic_role == "vm-data"
+    - name: Create PostgreSQL configuration directory
+      ansible.builtin.file:
+        path: /etc/smarttraffic/postgres
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: smarttraffic_role == "vm-data"
+    - name: Restrict PostgreSQL host connections to verified TLS clients
+      ansible.builtin.template:
+        src: templates/postgres.pg_hba.conf.j2
+        dest: /etc/smarttraffic/postgres/pg_hba.conf
+        owner: root
+        group: root
+        mode: "0644"
+      when: smarttraffic_role == "vm-data"
     - name: Validate this VM's Compose configuration
       ansible.builtin.command:
         argv:
           - docker
           - compose
+          - --env-file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
           - --env-file
           - "/etc/smarttraffic/{{ smarttraffic_role }}.env"
           - --file
@@ -479,12 +658,94 @@
           - config
           - --quiet
       changed_when: false
+    - name: Resolve this VM's Compose configuration for volume validation
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
+          - --env-file
+          - "/etc/smarttraffic/{{ smarttraffic_role }}.env"
+          - --file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_file }}"
+          - --profile
+          - "{{ smarttraffic_compose_profiles[smarttraffic_role] }}"
+          - config
+          - --format
+          - json
+      register: smarttraffic_resolved_compose_config
+      changed_when: false
+      failed_when: false
+      no_log: true
+    - name: Require Compose JSON resolution to succeed
+      ansible.builtin.assert:
+        that:
+          - smarttraffic_resolved_compose_config.rc == 0
+        fail_msg: >-
+          Compose passed its quiet validation but could not provide resolved
+          JSON for volume checks.
+    - name: Require Compose data volumes to match the verified inventory
+      ansible.builtin.assert:
+        that:
+          - (smarttraffic_resolved_compose_config.stdout | from_json).volumes['postgres-data'].name == smarttraffic_data_volumes.postgres.volume_name
+          - (smarttraffic_resolved_compose_config.stdout | from_json).volumes['kafka-data'].name == smarttraffic_data_volumes.kafka.volume_name
+          - (smarttraffic_resolved_compose_config.stdout | from_json).volumes['rabbitmq-data'].name == smarttraffic_data_volumes.rabbitmq.volume_name
+        fail_msg: >-
+          vm-data.env Compose volume names do not match the verified inventory;
+          refusing to start services with a different data volume.
+      when: smarttraffic_role == "vm-data"
 
   handlers:
     - name: Apply nftables
       ansible.builtin.systemd:
         name: nftables
         state: restarted
+
+- name: Start PostgreSQL before the Auth Server
+  hosts: vm-data
+  become: true
+  tasks:
+    - name: Start PostgreSQL with TLS enabled
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
+          - --env-file
+          - /etc/smarttraffic/vm-data.env
+          - --file
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - postgres
+          - up
+          - --detach
+          - --no-build
+          - --wait
+          - postgres
+      changed_when: true
+
+    - name: Provision Auth database roles and schema before starting Auth
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
+          - --env-file
+          - /etc/smarttraffic/vm-data.env
+          - --file
+          - /opt/smarttraffic/infra/compose.yaml
+          - --profile
+          - postgres
+          - exec
+          - -T
+          - postgres
+          - sh
+          - -c
+          - 'PGPASSWORD="$POSTGRES_PASSWORD" sh /docker-entrypoint-initdb.d/20-dashboard-auth-roles.sh'
+      changed_when: true
 
 - name: Start Auth Server before the brokers
   hosts: vm-auth
@@ -495,6 +756,8 @@
         argv:
           - docker
           - compose
+          - --env-file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
           - --env-file
           - /etc/smarttraffic/vm-auth.env
           - --file
@@ -512,6 +775,8 @@
           - docker
           - compose
           - --env-file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
+          - --env-file
           - /etc/smarttraffic/vm-auth.env
           - --file
           - /opt/smarttraffic/infra/compose.yaml
@@ -528,15 +793,17 @@
         state: started
         timeout: 60
 
-- name: Start data services after Auth Server
+- name: Start Kafka and RabbitMQ after Auth Server
   hosts: vm-data
   become: true
   tasks:
-    - name: Start Kafka, RabbitMQ, and PostgreSQL
+    - name: Start Kafka and RabbitMQ
       ansible.builtin.command:
         argv:
           - docker
           - compose
+          - --env-file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
           - --env-file
           - /etc/smarttraffic/vm-data.env
           - --file
@@ -547,6 +814,8 @@
           - --detach
           - --no-build
           - --wait
+          - kafka
+          - rabbitmq
       changed_when: true
 - name: Provision Kafka topic and least-privilege client ACLs
   hosts: vm-data
@@ -555,6 +824,8 @@
     kafka_compose_exec:
       - docker
       - compose
+      - --env-file
+      - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
       - --env-file
       - /etc/smarttraffic/vm-data.env
       - --file
@@ -672,7 +943,7 @@
             + ['/opt/kafka/bin/kafka-acls.sh']
             + kafka_admin_properties
             + ['--add', '--allow-principal', 'User:traffic-processor-kafka',
-               '--operation', 'Read', '--group', 'traffic-density-processor']
+               '--operation', 'Read', '--group', 'traffic-density-processor-v3']
           }}
       changed_when: true
 
@@ -711,6 +982,8 @@
           - docker
           - compose
           - --env-file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
+          - --env-file
           - "/etc/smarttraffic/{{ smarttraffic_role }}.env"
           - --file
           - "/opt/smarttraffic/{{ smarttraffic_compose_file }}"
@@ -731,6 +1004,8 @@
         argv:
           - docker
           - compose
+          - --env-file
+          - "/opt/smarttraffic/{{ smarttraffic_compose_defaults_file }}"
           - --env-file
           - /etc/smarttraffic/vm-ingest.env
           - --file

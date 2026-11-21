@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew SmartTraffic public IP TLS certificate
+Wants=network-online.target
+After=network-online.target docker.service nginx.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/smarttraffic/public-edge.env
+ExecStart=/usr/local/sbin/smarttraffic-certbot-ip renew

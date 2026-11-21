@@ -83,6 +83,7 @@ public final class KafkaOAuthClientConfiguration {
     public Properties streamsProperties(String applicationId) {
         Properties properties = commonProperties();
         properties.put("application.id", requiredValue(applicationId, "Kafka Streams application.id"));
+        properties.put("auto.offset.reset", "latest");
         return properties;
     }
 

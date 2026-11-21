@@ -6,6 +6,27 @@ the local Kafka/RabbitMQ/PostgreSQL test fixtures described below. Host
 networking lets the VM's nftables input/output policy enforce each service
 flow; the Compose project publishes no ports through Docker.
 
+PostgreSQL requires a TLS server certificate and private key in
+`POSTGRES_TLS_DIR` as `server.crt` and `server.key`. The deployment mounts a
+rendered `pg_hba.conf` that rejects every non-TLS network connection and only
+allows the `vm-core` and `vm-auth` source addresses. The Auth Server verifies
+the PostgreSQL certificate using its separately mounted CA and a JDBC URL with
+`sslmode=verify-full`.
+
+On a new, empty PostgreSQL data directory, the init scripts create the
+`dashboard_auth` schema, a Flyway migrator role, and a runtime role restricted
+to schema usage and table reads/inserts. PostgreSQL does not rerun
+`docker-entrypoint-initdb.d` for an existing data directory. Back up existing
+data and explicitly provision/verify the roles and schema before enabling Auth;
+do not delete or recreate a data volume to trigger initialization.
+For an existing database, after review and backup, the helper can be invoked
+explicitly; this resets both role passwords to the values in the protected
+Compose environment file:
+
+```powershell
+docker compose --env-file .env --file compose.aws.yaml exec -T postgres sh /docker-entrypoint-initdb.d/20-dashboard-auth-roles.sh
+```
+
 Before using it, create a protected `.env` from `.env.aws.example`, provision
 TLS materials, broker identities/ACLs, and PostgreSQL credentials, then
 validate with:

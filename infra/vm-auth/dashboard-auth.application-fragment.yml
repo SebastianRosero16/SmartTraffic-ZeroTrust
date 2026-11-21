@@ -1,0 +1,12 @@
+smarttraffic:
+  auth:
+    dashboard-client:
+      client-id: ${DASHBOARD_OAUTH_CLIENT_ID}
+      secret: ${DASHBOARD_OAUTH_CLIENT_SECRET}
+      redirect-uris:
+        - ${DASHBOARD_OAUTH_REDIRECT_URI}
+      audiences:
+        - urn:smarttraffic:dashboard
+    dashboard-user:
+      username: ${DASHBOARD_AUTH_USERNAME}
+      password-file: /run/auth/config/dashboard-user-password
