@@ -1091,6 +1091,85 @@
         stroke-dashoffset: -168;
       }
     }
+
+    .alert-history-panel {
+      margin-top: 30px;
+    }
+
+    .alert-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .alert-empty {
+      margin: 0;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.84rem;
+      text-align: center;
+    }
+
+    .alert-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: linear-gradient(145deg, var(--surface-raised), var(--surface));
+      font-size: 0.84rem;
+      animation: alert-in 300ms ease;
+    }
+
+    @keyframes alert-in {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .alert-item.alert-danger {
+      border-color: rgb(255 120 140 / 30%);
+      background: linear-gradient(145deg, rgb(120 39 61 / 18%), var(--surface));
+    }
+
+    .alert-item.alert-warning {
+      border-color: rgb(255 209 102 / 25%);
+      background: linear-gradient(145deg, rgb(90 70 20 / 18%), var(--surface));
+    }
+
+    .alert-item.alert-success {
+      border-color: rgb(99 230 173 / 25%);
+      background: linear-gradient(145deg, rgb(20 80 55 / 18%), var(--surface));
+    }
+
+    .alert-icon {
+      font-size: 1rem;
+      flex: 0 0 auto;
+    }
+
+    .alert-zone {
+      font-weight: 600;
+      color: #f4f8fc;
+      min-width: 80px;
+    }
+
+    .alert-transition {
+      flex: 1;
+      color: var(--muted);
+    }
+
+    .alert-transition strong {
+      color: #f4f8fc;
+    }
+
+    .alert-time {
+      color: var(--muted);
+      font-size: 0.76rem;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -1272,6 +1351,19 @@
         <span>La densidad mostrada es el promedio de vehículos por lectura que publica el procesador; no es un porcentaje.</span>
       </aside>
 
+      <section class="alert-history-panel" aria-labelledby="alerts-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Eventos de tráfico</p>
+            <h2 id="alerts-title">Historial de alertas</h2>
+          </div>
+          <span class="zone-count" id="alert-count">Sin alertas</span>
+        </div>
+        <div class="alert-list" id="alert-list" role="log" aria-live="polite" aria-label="Historial de cambios de estado">
+          <p class="alert-empty" id="alert-empty">Los cambios de estado aparecerán aquí en tiempo real.</p>
+        </div>
+      </section>
+
       <section class="control-panel" aria-label="Estado del canal de datos">
         <div class="control-row">
           <div class="control-copy">
@@ -1318,6 +1410,65 @@
     const logoutButton = document.getElementById("logout-button");
     const logoutStatus = document.getElementById("logout-status");
     const zones = new Map();
+    const MAX_ALERTS = 20;
+    const alerts = [];
+
+    function alertClass(currentStatus) {
+      if (currentStatus === "CONGESTIONADA") return "alert-danger";
+      if (currentStatus === "MODERADA") return "alert-warning";
+      return "alert-success";
+    }
+
+    function alertIcon(currentStatus) {
+      if (currentStatus === "CONGESTIONADA") return "⚠";
+      if (currentStatus === "MODERADA") return "〰";
+      return "✓";
+    }
+
+    function addAlert(zoneId, previousStatus, currentStatus, measuredAt) {
+      alerts.unshift({ zoneId, previousStatus, currentStatus, measuredAt, recordedAt: new Date() });
+      if (alerts.length > MAX_ALERTS) alerts.pop();
+      renderAlerts();
+    }
+
+    function renderAlerts() {
+      const list = document.getElementById("alert-list");
+      const empty = document.getElementById("alert-empty");
+      const count = document.getElementById("alert-count");
+      if (alerts.length === 0) {
+        list.replaceChildren(empty);
+        count.textContent = "Sin alertas";
+        return;
+      }
+      empty.remove();
+      count.textContent = `${alerts.length} evento${alerts.length === 1 ? "" : "s"}`;
+      const fragment = document.createDocumentFragment();
+      alerts.forEach((alert) => {
+        const item = document.createElement("div");
+        item.className = `alert-item ${alertClass(alert.currentStatus)}`;
+
+        const icon = document.createElement("span");
+        icon.className = "alert-icon";
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = alertIcon(alert.currentStatus);
+
+        const zone = document.createElement("span");
+        zone.className = "alert-zone";
+        zone.textContent = alert.zoneId;
+
+        const transition = document.createElement("span");
+        transition.className = "alert-transition";
+        transition.innerHTML = `${alert.previousStatus} → <strong>${alert.currentStatus}</strong>`;
+
+        const time = document.createElement("span");
+        time.className = "alert-time";
+        time.textContent = formatTime(alert.measuredAt);
+
+        item.append(icon, zone, transition, time);
+        fragment.append(item);
+      });
+      list.replaceChildren(fragment);
+    }
     let socket;
     let reconnectTimer;
     let reconnectDelay = 1000;
@@ -1514,6 +1665,9 @@
 
       const current = zones.get(update.zoneId);
       if (current && update.measuredAt < current.measuredAt) return;
+      if (current && current.status !== update.status) {
+        addAlert(update.zoneId, current.status, update.status, update.measuredAt);
+      }
       zones.set(update.zoneId, update);
       errorNotice.hidden = true;
       feedBadgeLabel.textContent = "Datos recibidos";
