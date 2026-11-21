@@ -1473,6 +1473,8 @@
     let reconnectTimer;
     let reconnectDelay = 1000;
     let pageClosing = false;
+    let trafficWatchdogTimer;
+    let lastTrafficMessageAt = 0;
 
     function formatNumber(value) {
       return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(value);
@@ -1669,6 +1671,7 @@
         addAlert(update.zoneId, current.status, update.status, update.measuredAt);
       }
       zones.set(update.zoneId, update);
+      lastTrafficMessageAt = Date.now();
       errorNotice.hidden = true;
       feedBadgeLabel.textContent = "Datos recibidos";
       feedDot.classList.remove("is-disconnected");
@@ -1712,6 +1715,7 @@
 
       socket.addEventListener("open", () => {
         reconnectDelay = 1000;
+        lastTrafficMessageAt = Date.now();
         setConnectionStatus("Conectado al backend", true);
         feedStatus.textContent = "Esperando actualizaciones de tráfico...";
       });
@@ -1720,9 +1724,24 @@
         setConnectionStatus("Error de conexión; intentando reconectar...", false);
       });
       socket.addEventListener("close", () => {
+        socket = null;
         setConnectionStatus("Desconectado; intentando reconectar...", false);
         scheduleReconnect();
       });
+    }
+
+    function startTrafficWatchdog() {
+      if (trafficWatchdogTimer) return;
+      trafficWatchdogTimer = window.setInterval(() => {
+        if (pageClosing || lastTrafficMessageAt === 0) return;
+        if (Date.now() - lastTrafficMessageAt < 90_000) return;
+        setConnectionStatus("Sin datos recientes; reconectando...", false);
+        if (socket) {
+          socket.close(1000, "Traffic watchdog reconnect");
+        } else {
+          scheduleReconnect();
+        }
+      }, 15_000);
     }
 
     function getCookie(name) {
@@ -1797,10 +1816,12 @@
     window.addEventListener("pagehide", () => {
       pageClosing = true;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (trafficWatchdogTimer) window.clearInterval(trafficWatchdogTimer);
       if (socket) socket.close();
     });
 
     renderZones();
+    startTrafficWatchdog();
     connectToBackend();
   </script>
 </body>
