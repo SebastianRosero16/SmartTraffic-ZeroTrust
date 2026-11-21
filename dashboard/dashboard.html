@@ -435,6 +435,7 @@
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 15px;
+      margin-top: 18px;
     }
 
     .zones-grid[hidden] {
@@ -632,6 +633,12 @@
       transform: translateY(-2px);
       border-color: rgb(131 182 255 / 48%);
       box-shadow: 0 18px 38px rgb(3 10 20 / 25%);
+    }
+
+    .state-chip.state-waiting {
+      border-color: rgb(131 182 255 / 24%);
+      background: rgb(131 182 255 / 8%);
+      color: #c0d2e8;
     }
 
     .card-heading {
@@ -1249,7 +1256,7 @@
             </article>
           </div>
         </div>
-        <div class="zones-grid" id="zones-grid" hidden></div>
+        <div class="zones-grid" id="zones-grid"></div>
         <div class="notice notice-empty" id="empty-notice" role="status" hidden>
           <p class="notice-title">Aún no se reciben actualizaciones</p>
           <p class="notice-copy">Al llegar el primer estado desde RabbitMQ, se mostrarán aquí las zonas de tráfico.</p>
@@ -1291,7 +1298,8 @@
     const stateClasses = {
       DESPEJADA: "state-clear",
       MODERADA: "state-moderate",
-      CONGESTIONADA: "state-congested"
+      CONGESTIONADA: "state-congested",
+      SIN_ACTUALIZACION: "state-waiting"
     };
 
     const grid = document.getElementById("zones-grid");
@@ -1339,7 +1347,9 @@
 
       const state = document.createElement("span");
       state.className = `state-chip ${stateClasses[zone.status]}`;
-      state.textContent = zone.status;
+      state.textContent = zone.status === "SIN_ACTUALIZACION"
+        ? "Esperando"
+        : zone.status;
       heading.append(name, state);
 
       const vehicleRow = document.createElement("div");
@@ -1360,7 +1370,9 @@
       const source = document.createElement("span");
       source.textContent = "Estado procesado";
       const updated = document.createElement("span");
-      updated.textContent = formatTime(zone.measuredAt);
+      updated.textContent = zone.measuredAt
+        ? formatTime(zone.measuredAt)
+        : "Sin actualización";
       footer.append(source, updated);
 
       card.append(heading, vehicleRow, densityLabel, footer);
@@ -1417,10 +1429,18 @@
     function renderZones() {
       const currentZones = [...zones.values()].sort((left, right) => left.zoneId.localeCompare(right.zoneId));
       const fragment = document.createDocumentFragment();
-      currentZones.forEach((zone) => fragment.append(createZoneCard(zone)));
+      const displayZones = [
+        ...currentZones,
+        ...[
+          { zoneId: "zone-1", measuredAt: null, vehicleCount: 0, densityValue: 0, status: "SIN_ACTUALIZACION" },
+          { zoneId: "zone-2", measuredAt: null, vehicleCount: 0, densityValue: 0, status: "SIN_ACTUALIZACION" }
+        ].filter((placeholder) => !currentZones.some((zone) =>
+          zone.zoneId === placeholder.zoneId
+          || zone.zoneId.toLowerCase() === placeholder.zoneId.toLowerCase()))
+      ].slice(0, 2);
+      displayZones.forEach((zone) => fragment.append(createZoneCard(zone)));
       grid.replaceChildren(fragment);
-      grid.hidden = currentZones.length === 0;
-      emptyNotice.hidden = currentZones.length !== 0;
+      emptyNotice.hidden = true;
       updateTrafficMap(currentZones);
 
       const totalVehicles = currentZones.reduce((total, zone) => total + zone.vehicleCount, 0);
