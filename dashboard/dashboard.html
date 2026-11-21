@@ -441,6 +441,142 @@
       display: none;
     }
 
+    .traffic-map-panel {
+      margin-bottom: 18px;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: linear-gradient(145deg, rgb(26 44 66 / 96%), rgb(16 29 47 / 98%));
+      box-shadow: 0 15px 36px rgb(3 10 20 / 18%);
+    }
+
+    .traffic-map-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      min-height: 260px;
+      overflow: hidden;
+      border: 1px solid rgb(131 182 255 / 16%);
+      border-radius: 14px;
+      background: #0b1727;
+    }
+
+    .traffic-map-zone {
+      --zone-color: #83b6ff;
+      position: relative;
+      min-height: 260px;
+      overflow: hidden;
+      padding: 18px;
+      background:
+        linear-gradient(135deg, rgb(255 255 255 / 3%) 25%, transparent 25%) 0 0 / 26px 26px,
+        linear-gradient(315deg, rgb(255 255 255 / 3%) 25%, transparent 25%) 0 0 / 26px 26px,
+        linear-gradient(145deg, rgb(16 38 57 / 96%), rgb(12 27 43 / 98%));
+      transition: background 180ms ease, border-color 180ms ease;
+    }
+
+    .traffic-map-zone + .traffic-map-zone {
+      border-left: 3px solid rgb(131 182 255 / 24%);
+    }
+
+    .traffic-map-zone.state-clear {
+      --zone-color: #56e0c3;
+      background:
+        linear-gradient(135deg, rgb(86 224 195 / 5%) 25%, transparent 25%) 0 0 / 26px 26px,
+        linear-gradient(315deg, rgb(86 224 195 / 5%) 25%, transparent 25%) 0 0 / 26px 26px,
+        linear-gradient(145deg, rgb(10 55 57 / 96%), rgb(10 34 43 / 98%));
+    }
+
+    .traffic-map-zone.state-moderate {
+      --zone-color: #ffd166;
+      background:
+        linear-gradient(135deg, rgb(255 209 102 / 6%) 25%, transparent 25%) 0 0 / 26px 26px,
+        linear-gradient(315deg, rgb(255 209 102 / 6%) 25%, transparent 25%) 0 0 / 26px 26px,
+        linear-gradient(145deg, rgb(67 54 26 / 96%), rgb(38 40 38 / 98%));
+    }
+
+    .traffic-map-zone.state-congested {
+      --zone-color: #ff7188;
+      background:
+        linear-gradient(135deg, rgb(255 113 136 / 7%) 25%, transparent 25%) 0 0 / 26px 26px,
+        linear-gradient(315deg, rgb(255 113 136 / 7%) 25%, transparent 25%) 0 0 / 26px 26px,
+        linear-gradient(145deg, rgb(69 34 47 / 96%), rgb(42 29 43 / 98%));
+    }
+
+    .map-zone-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .map-zone-name {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .map-zone-status {
+      color: var(--zone-color);
+      font-size: 0.72rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .map-road {
+      position: absolute;
+      left: 8%;
+      right: 8%;
+      bottom: 28px;
+      height: 92px;
+      border: 2px solid rgb(181 205 230 / 18%);
+      border-radius: 46px;
+      background:
+        linear-gradient(90deg, transparent 47%, rgb(255 255 255 / 28%) 48%, rgb(255 255 255 / 28%) 52%, transparent 53%) 0 50% / 34px 2px repeat-x,
+        rgb(37 55 73 / 72%);
+      box-shadow: inset 0 0 28px rgb(3 10 20 / 35%);
+    }
+
+    .map-cars {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding-top: 30px;
+    }
+
+    .map-car {
+      position: relative;
+      width: 48px;
+      height: 24px;
+      border: 2px solid rgb(255 255 255 / 72%);
+      border-radius: 10px 14px 8px 8px;
+      background: var(--zone-color);
+      box-shadow: 0 7px 16px rgb(3 10 20 / 38%);
+    }
+
+    .map-car::before {
+      content: "";
+      position: absolute;
+      top: 4px;
+      left: 12px;
+      width: 18px;
+      height: 14px;
+      border-radius: 7px 9px 4px 4px;
+      background: rgb(10 28 45 / 78%);
+    }
+
+    .map-car::after {
+      content: "";
+      position: absolute;
+      right: -5px;
+      bottom: 3px;
+      width: 8px;
+      height: 4px;
+      border-radius: 8px;
+      background: #fff5a8;
+      box-shadow: 0 -12px 0 #fff5a8;
+    }
+
     .zone-card {
       min-width: 0;
       padding: 19px;
@@ -853,6 +989,24 @@
         grid-template-columns: 1fr;
       }
 
+      .traffic-map-panel {
+        padding: 10px;
+      }
+
+      .traffic-map-grid {
+        grid-template-columns: 1fr;
+        min-height: 0;
+      }
+
+      .traffic-map-zone {
+        min-height: 210px;
+      }
+
+      .traffic-map-zone + .traffic-map-zone {
+        border-top: 3px solid rgb(131 182 255 / 24%);
+        border-left: 0;
+      }
+
       .zone-card {
         padding: 17px;
       }
@@ -990,6 +1144,28 @@
           </div>
           <span class="zone-count" id="zone-count">Esperando actualizaciones</span>
         </div>
+        <div class="traffic-map-panel" id="traffic-map-panel" aria-label="Mapa visual de las dos zonas">
+          <div class="traffic-map-grid">
+            <article class="traffic-map-zone" id="map-zone-1">
+              <div class="map-zone-heading">
+                <h3 class="map-zone-name" id="map-zone-1-name">Zona 1</h3>
+                <span class="map-zone-status" id="map-zone-1-status">Esperando</span>
+              </div>
+              <div class="map-road" aria-hidden="true">
+                <div class="map-cars" id="map-zone-1-cars"></div>
+              </div>
+            </article>
+            <article class="traffic-map-zone" id="map-zone-2">
+              <div class="map-zone-heading">
+                <h3 class="map-zone-name" id="map-zone-2-name">Zona 2</h3>
+                <span class="map-zone-status" id="map-zone-2-status">Esperando</span>
+              </div>
+              <div class="map-road" aria-hidden="true">
+                <div class="map-cars" id="map-zone-2-cars"></div>
+              </div>
+            </article>
+          </div>
+        </div>
         <div class="zones-grid" id="zones-grid" hidden></div>
         <div class="notice notice-empty" id="empty-notice" role="status" hidden>
           <p class="notice-title">Aún no se reciben actualizaciones</p>
@@ -1108,6 +1284,53 @@
       return card;
     }
 
+    function updateTrafficMap(currentZones) {
+      const mapSlots = [
+        { zoneId: "zone-1", name: "Zona 1", slot: 1 },
+        { zoneId: "zone-2", name: "Zona 2", slot: 2 }
+      ];
+
+      mapSlots.forEach((slot, index) => {
+        const zone = currentZones.find((item) => item.zoneId === slot.zoneId)
+          || currentZones[index];
+        const panel = document.getElementById(`map-zone-${slot.slot}`);
+        const name = document.getElementById(`map-zone-${slot.slot}-name`);
+        const status = document.getElementById(`map-zone-${slot.slot}-status`);
+        const cars = document.getElementById(`map-zone-${slot.slot}-cars`);
+
+        panel.classList.remove("state-clear", "state-moderate", "state-congested");
+        name.textContent = zone ? zone.zoneId : slot.name;
+
+        if (!zone) {
+          status.textContent = "Esperando";
+          cars.replaceChildren();
+          panel.setAttribute("aria-label", `${slot.name}: esperando actualización`);
+          return;
+        }
+
+        panel.classList.add(stateClasses[zone.status]);
+        status.textContent = zone.status;
+
+        const carCount = zone.status === "CONGESTIONADA"
+          ? 3
+          : zone.status === "MODERADA"
+            ? 1
+            : 0;
+        const fragment = document.createDocumentFragment();
+        for (let carIndex = 0; carIndex < carCount; carIndex += 1) {
+          const car = document.createElement("span");
+          car.className = "map-car";
+          car.setAttribute("aria-hidden", "true");
+          fragment.append(car);
+        }
+        cars.replaceChildren(fragment);
+        panel.setAttribute(
+          "aria-label",
+          `${zone.zoneId}: ${zone.status}, ${carCount} vehículo${carCount === 1 ? "" : "s"} representativo${carCount === 1 ? "" : "s"}`
+        );
+      });
+    }
+
     function renderZones() {
       const currentZones = [...zones.values()].sort((left, right) => left.zoneId.localeCompare(right.zoneId));
       const fragment = document.createDocumentFragment();
@@ -1115,6 +1338,7 @@
       grid.replaceChildren(fragment);
       grid.hidden = currentZones.length === 0;
       emptyNotice.hidden = currentZones.length !== 0;
+      updateTrafficMap(currentZones);
 
       const totalVehicles = currentZones.reduce((total, zone) => total + zone.vehicleCount, 0);
       const latestMeasurement = currentZones.reduce(
