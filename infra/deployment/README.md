@@ -62,8 +62,7 @@ Ansible checks for running legacy projects and fails closed if it finds any.
 
 The migration to the canonical Compose file was completed on all five VMs.
 All running containers were confirmed to use
-`/opt/smarttraffic/infra/compose.yaml`. The per-VM Compose files
-(`infra/vm-*/compose.yaml`, `infra/vm-data/compose.aws.yaml`) have been
+`/opt/smarttraffic/infra/compose.yaml`. The per-VM Compose files have been
 removed from the repository. The legacy guard in Ansible remains active: if
 a legacy project name (`smarttraffic-vm-*`) is found running on any VM,
 Ansible will fail with a clear message before starting any services.

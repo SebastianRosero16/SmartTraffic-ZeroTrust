@@ -129,7 +129,6 @@ services:
 
   # -------------------------------------------------------------------------
   # profile: data  — vm-data  (Kafka, RabbitMQ, PostgreSQL)
-  # Uses the production/AWS configuration derived from compose.aws.yaml.
   # Data volumes are bind-mounted to EBS-backed host paths provisioned by
   # Ansible; create_host_path is false to enforce that Ansible runs first.
   # -------------------------------------------------------------------------
