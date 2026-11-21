@@ -17,6 +17,7 @@ public final class TrafficReadingGenerator {
     private final Clock clock;
     private final RandomGenerator randomGenerator;
 
+    /** Configura el generador y valida sus parametros de entrada. */
     public TrafficReadingGenerator(
             List<SensorId> sensors,
             List<ZoneId> zones,
@@ -39,6 +40,7 @@ public final class TrafficReadingGenerator {
         this.randomGenerator = Objects.requireNonNull(randomGenerator, "Random generator is required");
     }
 
+    /** Genera una lectura aleatoria; no la publica en Kafka. */
     public TrafficReading generate() {
         SensorId sensorId = sensors.get(randomGenerator.nextInt(sensors.size()));
         ZoneId zoneId = zones.get(randomGenerator.nextInt(zones.size()));
@@ -48,6 +50,7 @@ public final class TrafficReadingGenerator {
         return new TrafficReading(eventId, sensorId, zoneId, clock.instant(), vehicleCount);
     }
 
+    /** Valida la lista y devuelve una copia inmutable de sus identificadores. */
     private static <T> List<T> copyRequiredIdentifiers(List<T> identifiers, String label) {
         Objects.requireNonNull(identifiers, label + " are required");
         if (identifiers.isEmpty()) {

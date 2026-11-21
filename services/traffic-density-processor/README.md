@@ -44,6 +44,11 @@ In addition to the Kafka OAuth client environment listed in the
 | `TRAFFIC_MODERATE_THRESHOLD` | Density at which the state becomes `MODERADA`. |
 | `TRAFFIC_CONGESTED_THRESHOLD` | Density at which the state becomes `CONGESTIONADA`; must exceed the moderate threshold. |
 
+The processor starts at the latest source offsets to avoid replaying stale
+telemetry. When changing a Kafka Streams state-store serialization schema
+incompatibly, assign a new `KAFKA_STREAMS_APPLICATION_ID`; this creates fresh
+internal topics without deleting previous state.
+
 ## RabbitMQ publisher configuration
 
 The adapter requires the following environment variables when it is

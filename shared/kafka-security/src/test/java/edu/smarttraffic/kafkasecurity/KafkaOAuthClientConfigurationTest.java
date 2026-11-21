@@ -41,6 +41,7 @@ class KafkaOAuthClientConfigurationTest {
         assertEquals("traffic-archiver", consumer.get("group.id"));
         assertEquals("false", consumer.get("enable.auto.commit"));
         assertEquals("traffic-density-processor", streams.get("application.id"));
+        assertEquals("latest", streams.get("auto.offset.reset"));
         assertEquals("SASL_SSL", streams.get("security.protocol"));
     }
 

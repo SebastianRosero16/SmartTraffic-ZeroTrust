@@ -10,9 +10,11 @@ table inet smarttraffic {
 {% if smarttraffic_role == "vm-data" %}
         ip saddr { {{ smarttraffic_vm_ips["vm-ingest"] }}, {{ smarttraffic_vm_ips["vm-core"] }} } tcp dport 9092 accept
         ip saddr { {{ smarttraffic_vm_ips["vm-core"] }}, {{ smarttraffic_vm_ips["vm-app"] }} } tcp dport 5672 accept
-        ip saddr {{ smarttraffic_vm_ips["vm-core"] }} tcp dport 5432 accept
+        ip saddr { {{ smarttraffic_vm_ips["vm-core"] }}, {{ smarttraffic_vm_ips["vm-auth"] }} } tcp dport 5432 accept
 {% elif smarttraffic_role == "vm-auth" %}
-        ip saddr { {{ smarttraffic_vm_ips["vm-ingest"] }}, {{ smarttraffic_vm_ips["vm-core"] }}, {{ smarttraffic_vm_ips["vm-app"] }}, {{ smarttraffic_vm_ips["vm-data"] }} } tcp dport 443 accept
+        ip saddr { {{ smarttraffic_vm_ips["vm-ingest"] }}, {{ smarttraffic_vm_ips["vm-core"] }}, {{ smarttraffic_vm_ips["vm-app"] }}, {{ smarttraffic_vm_ips["vm-data"] }}, {{ smarttraffic_vm_ips["vm-dashboard-public"] }} } tcp dport 443 accept
+{% elif smarttraffic_role == "vm-app" %}
+        ip saddr {{ smarttraffic_vm_ips["vm-dashboard-public"] }} tcp dport 8080 accept
 {% endif %}
     }
 
@@ -45,6 +47,8 @@ table inet smarttraffic {
 {% elif smarttraffic_role == "vm-app" %}
         ip daddr {{ smarttraffic_vm_ips["vm-data"] }} tcp dport 5672 accept
         ip daddr {{ smarttraffic_vm_ips["vm-auth"] }} tcp dport 443 accept
+{% elif smarttraffic_role == "vm-auth" %}
+        ip daddr {{ smarttraffic_vm_ips["vm-data"] }} tcp dport 5432 accept
 {% elif smarttraffic_role == "vm-data" %}
         ip daddr {{ smarttraffic_vm_ips["vm-auth"] }} tcp dport 443 accept
 {% endif %}

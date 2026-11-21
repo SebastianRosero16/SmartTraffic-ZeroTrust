@@ -10,6 +10,7 @@ import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
+import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
 import org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat;
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
 
@@ -40,6 +41,7 @@ public final class ConfiguredRegisteredClientRepository implements RegisteredCli
                     .build();
             configuredClients.put(clientId, registeredClient);
         });
+        addDashboardClient(configuredClients, properties.getDashboardClient(), accessTokenTtl, passwordEncoder);
         clientsByClientId = Map.copyOf(configuredClients);
     }
 
@@ -74,5 +76,49 @@ public final class ConfiguredRegisteredClientRepository implements RegisteredCli
         if (client.getAudiences().isEmpty() || client.getAudiences().stream().anyMatch(String::isBlank)) {
             throw new IllegalStateException("At least one non-blank audience must be configured for " + clientId);
         }
+    }
+
+    private static void addDashboardClient(
+            Map<String, RegisteredClient> configuredClients,
+            AuthServerProperties.DashboardClient client,
+            Duration accessTokenTtl,
+            PasswordEncoder passwordEncoder) {
+        if (client == null || isBlank(client.getClientId()) && isBlank(client.getSecret())) {
+            return;
+        }
+        if (isBlank(client.getClientId()) || isBlank(client.getSecret())) {
+            throw new IllegalStateException("Dashboard client ID and secret must both be configured");
+        }
+        if (client.getRedirectUris().isEmpty()
+                || client.getRedirectUris().stream().anyMatch(String::isBlank)) {
+            throw new IllegalStateException("At least one dashboard client redirect URI must be configured");
+        }
+        if (client.getAudiences().isEmpty() || client.getAudiences().stream().anyMatch(String::isBlank)) {
+            throw new IllegalStateException("At least one dashboard client audience must be configured");
+        }
+        if (configuredClients.containsKey(client.getClientId())) {
+            throw new IllegalStateException("Dashboard client ID must be unique");
+        }
+
+        RegisteredClient.Builder registeredClient = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId(client.getClientId())
+                .clientSecret(passwordEncoder.encode(client.getSecret()))
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .scope("openid")
+                .clientSettings(ClientSettings.builder()
+                        .requireProofKey(true)
+                        .requireAuthorizationConsent(false)
+                        .build())
+                .tokenSettings(TokenSettings.builder()
+                        .accessTokenFormat(OAuth2TokenFormat.SELF_CONTAINED)
+                        .accessTokenTimeToLive(accessTokenTtl)
+                        .build());
+        client.getRedirectUris().forEach(registeredClient::redirectUri);
+        configuredClients.put(client.getClientId(), registeredClient.build());
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

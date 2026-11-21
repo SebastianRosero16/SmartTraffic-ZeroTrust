@@ -26,6 +26,13 @@ del proyecto; no implica que los componentes ya estén implementados o probados.
 | `vm-core` — procesamiento | `traffic_density_processor`, `traffic_archiver` | Calcular el estado de tráfico por zona, publicar actualizaciones y guardar lecturas originales en PostgreSQL. |
 | `vm-app` — aplicación | `user_dashboard_backend`, `alert_dispatcher`, `query_client` y `dashboard.html` | Servir el dashboard en tiempo real, gestionar alertas y responder consultas. `dashboard.html` es la interfaz web, no un microservicio. |
 
+La publicación pública usa una EC2 de borde adicional, que no sustituye ni
+cuenta como una de las cinco VM requeridas. Nginx reenvía HTTP y WebSocket al
+backend privado de `vm-app`; no ejecuta otro consumidor RabbitMQ ni guarda
+credenciales OAuth. El puerto 8080 del backend solo debe aceptar conexiones
+desde esa EC2 de borde mediante Security Group y `nftables`. HTTPS válido
+requiere un dominio y un certificado confiable.
+
 El proyecto requiere orquestación con Docker Compose. La separación de
 despliegues por VM evita proponer una única red Docker plana que conecte
 indiscriminadamente todas las zonas. La topología concreta de redes y archivos
@@ -34,10 +41,10 @@ Compose se detallará durante la implementación.
 El backend y la interfaz del dashboard implementan el consumo RabbitMQ y la
 entrega por WebSocket. En la demostración AWS del 17 de noviembre de 2026, el
 dashboard se abrió por un túnel SSM y mostró conexión al backend y mediciones
-en vivo. La topología desplegada, el commit y los permisos efectivos del broker
-no se identificaron; `dashboard_updates_queue` y `/ws/traffic` no deben
-considerarse aprobaciones formales de producción. Los requisitos de ejecución
-están en el [README del backend](../services/user-dashboard-backend/README.md).
+en vivo. La publicación pública usa un proxy Nginx hacia ese mismo backend;
+los controles de red y TLS deben validarse antes de presentarla como una
+configuración final de producción. Los requisitos de ejecución están en el
+[README del backend](../services/user-dashboard-backend/README.md).
 
 `alert-dispatcher` y `query-client` implementan consumo/respuesta a consultas
 correlacionadas y alertas por transición de estado. La demo AWS mostró
@@ -176,9 +183,9 @@ de compatibilidad y recursos del equipo.
 
 ## Diagrama lógico
 
-El diagrama refleja la arquitectura propuesta y los nombres que aparecen en el
-README. No especifica direcciones IP, puertos ni una topología de red
-definitiva.
+El diagrama refleja la arquitectura y los nombres que aparecen en el README.
+La EC2 de borde es adicional a las cinco VM del proyecto. No se especifican
+direcciones IP ni credenciales.
 
 ```mermaid
 flowchart LR
@@ -215,6 +222,10 @@ flowchart LR
         WEB["dashboard.html"]
     end
 
+    subgraph EDGE["EC2 de borde - publicación temporal HTTP"]
+        NGINX["Nginx<br/>proxy HTTP y WebSocket"]
+    end
+
     SIM -->|"lecturas aleatorias"| KAFKA
     KAFKA -->|"lecturas para procesamiento"| PROC
     KAFKA -->|"lecturas originales"| ARCH
@@ -225,6 +236,7 @@ flowchart LR
     DASHQ --> DASH
     ALERTQ --> ALERT
     DASH -->|"WebSocket"| WEB
+    NGINX -->|"HTTP y /ws/traffic por VPC"| DASH
     QUERY -->|"solicitud: replyTo + correlationId"| QUERYQ
     QUERYQ -->|"solicitud"| ALERT
     ALERT -->|"respuesta correlacionada"| ANSWERS

@@ -22,7 +22,7 @@ in Git.
 | `TRAFFIC_ZONE_IDS` | Comma-separated, non-empty zone IDs. |
 | `TRAFFIC_MIN_VEHICLES` | Inclusive minimum generated vehicle count. |
 | `TRAFFIC_MAX_VEHICLES` | Inclusive maximum generated vehicle count. |
-| `TRAFFIC_INTERVAL_MS` | Positive delay between acknowledged readings. |
+| `TRAFFIC_INTERVAL_MS` | Positive delay between acknowledged readings; deployment examples use 5000 ms. |
 
 ## Run
 

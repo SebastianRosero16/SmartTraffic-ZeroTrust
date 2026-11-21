@@ -1,0 +1,100 @@
+limit_req_zone $binary_remote_addr zone=auth_login:10m rate=5r/m;
+
+server {
+    listen 80 default_server;
+    server_name __EDGE_PUBLIC_IPV4__;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://__EDGE_PUBLIC_IPV4__$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl default_server;
+    server_name __EDGE_PUBLIC_IPV4__;
+    server_tokens off;
+    limit_req_status 429;
+
+    ssl_certificate /etc/letsencrypt/live/__EDGE_PUBLIC_IPV4__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__EDGE_PUBLIC_IPV4__/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port 443;
+
+    proxy_ssl_server_name on;
+    proxy_ssl_name __AUTH_UPSTREAM_TLS_NAME__;
+    proxy_ssl_trusted_certificate /etc/smarttraffic/auth-ca.pem;
+    proxy_ssl_verify on;
+    proxy_ssl_verify_depth 2;
+
+    location ^~ /oauth2/authorization/ {
+        proxy_pass http://__VM_APP_PRIVATE_IP__:8080;
+        proxy_http_version 1.1;
+    }
+
+    location ^~ /login/oauth2/code/ {
+        proxy_pass http://__VM_APP_PRIVATE_IP__:8080;
+        proxy_http_version 1.1;
+    }
+
+    location = /login {
+        limit_req zone=auth_login burst=5 nodelay;
+        proxy_pass https://__VM_AUTH_PRIVATE_IP__:443;
+        proxy_http_version 1.1;
+    }
+
+    location = /logout {
+        proxy_pass https://__VM_AUTH_PRIVATE_IP__:443;
+        proxy_http_version 1.1;
+    }
+
+    location ^~ /.well-known/ {
+        proxy_pass https://__VM_AUTH_PRIVATE_IP__:443;
+        proxy_http_version 1.1;
+    }
+
+    location ^~ /oauth2/ {
+        proxy_pass https://__VM_AUTH_PRIVATE_IP__:443;
+        proxy_http_version 1.1;
+    }
+
+    location ^~ /connect/ {
+        proxy_pass https://__VM_AUTH_PRIVATE_IP__:443;
+        proxy_http_version 1.1;
+    }
+
+    location = /userinfo {
+        proxy_pass https://__VM_AUTH_PRIVATE_IP__:443;
+        proxy_http_version 1.1;
+    }
+
+    location /ws/traffic {
+        proxy_pass http://__VM_APP_PRIVATE_IP__:8080/ws/traffic;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port 443;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    location / {
+        proxy_pass http://__VM_APP_PRIVATE_IP__:8080;
+        proxy_http_version 1.1;
+    }
+}
