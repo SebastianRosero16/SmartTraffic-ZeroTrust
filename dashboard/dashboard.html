@@ -1410,8 +1410,21 @@
     const logoutButton = document.getElementById("logout-button");
     const logoutStatus = document.getElementById("logout-status");
     const zones = new Map();
-    const MAX_ALERTS = 20;
-    const alerts = [];
+    const zoneAlertHistory = new Map([
+      ["zone-1", {
+        previousStatus: "DESPEJADA",
+        currentStatus: "DESPEJADA",
+        measuredAt: null,
+        received: false
+      }],
+      ["zone-2", {
+        previousStatus: "DESPEJADA",
+        currentStatus: "DESPEJADA",
+        measuredAt: null,
+        received: false
+      }]
+    ]);
+    const pendingTrafficUpdates = new Map();
 
     function alertClass(currentStatus) {
       if (currentStatus === "CONGESTIONADA") return "alert-danger";
@@ -1425,9 +1438,18 @@
       return "✓";
     }
 
-    function addAlert(zoneId, previousStatus, currentStatus, measuredAt) {
-      alerts.unshift({ zoneId, previousStatus, currentStatus, measuredAt, recordedAt: new Date() });
-      if (alerts.length > MAX_ALERTS) alerts.pop();
+    function updateZoneAlert(update) {
+      if (!zoneAlertHistory.has(update.zoneId)) return;
+      const last = zoneAlertHistory.get(update.zoneId);
+      const previousStatus = last.received
+        ? last.currentStatus
+        : "DESPEJADA";
+      zoneAlertHistory.set(update.zoneId, {
+        previousStatus,
+        currentStatus: update.status,
+        measuredAt: update.measuredAt,
+        received: true
+      });
       renderAlerts();
     }
 
@@ -1435,15 +1457,10 @@
       const list = document.getElementById("alert-list");
       const empty = document.getElementById("alert-empty");
       const count = document.getElementById("alert-count");
-      if (alerts.length === 0) {
-        list.replaceChildren(empty);
-        count.textContent = "Sin alertas";
-        return;
-      }
       empty.remove();
-      count.textContent = `${alerts.length} evento${alerts.length === 1 ? "" : "s"}`;
+      count.textContent = "2 zonas";
       const fragment = document.createDocumentFragment();
-      alerts.forEach((alert) => {
+      zoneAlertHistory.forEach((alert, zoneId) => {
         const item = document.createElement("div");
         item.className = `alert-item ${alertClass(alert.currentStatus)}`;
 
@@ -1454,7 +1471,7 @@
 
         const zone = document.createElement("span");
         zone.className = "alert-zone";
-        zone.textContent = alert.zoneId;
+        zone.textContent = zoneId;
 
         const transition = document.createElement("span");
         transition.className = "alert-transition";
@@ -1465,7 +1482,9 @@
 
         const time = document.createElement("span");
         time.className = "alert-time";
-        time.textContent = formatTime(alert.measuredAt);
+        time.textContent = alert.measuredAt
+          ? formatTime(alert.measuredAt)
+          : "Esperando actualización";
 
         item.append(icon, zone, transition, time);
         fragment.append(item);
@@ -1478,6 +1497,7 @@
     let pageClosing = false;
     let trafficWatchdogTimer;
     let lastTrafficMessageAt = 0;
+    let zoneRenderTimer;
 
     function formatNumber(value) {
       return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(value);
@@ -1670,11 +1690,21 @@
 
       const current = zones.get(update.zoneId);
       if (current && update.measuredAt < current.measuredAt) return;
-      if (current && current.status !== update.status) {
-        addAlert(update.zoneId, current.status, update.status, update.measuredAt);
-      }
-      zones.set(update.zoneId, update);
+      pendingTrafficUpdates.set(update.zoneId, update);
+      if (zoneRenderTimer) window.clearTimeout(zoneRenderTimer);
+      zoneRenderTimer = window.setTimeout(flushPendingTrafficUpdates, 250);
       lastTrafficMessageAt = Date.now();
+      return;
+    }
+
+    function flushPendingTrafficUpdates() {
+      zoneRenderTimer = undefined;
+      if (pendingTrafficUpdates.size === 0) return;
+      pendingTrafficUpdates.forEach((update) => {
+        updateZoneAlert(update);
+        zones.set(update.zoneId, update);
+      });
+      pendingTrafficUpdates.clear();
       errorNotice.hidden = true;
       feedBadgeLabel.textContent = "Datos recibidos";
       feedDot.classList.remove("is-disconnected");
@@ -1820,6 +1850,7 @@
       pageClosing = true;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       if (trafficWatchdogTimer) window.clearInterval(trafficWatchdogTimer);
+      if (zoneRenderTimer) window.clearTimeout(zoneRenderTimer);
       if (socket) socket.close();
     });
 
@@ -1845,6 +1876,7 @@
       }
     });
 
+    renderAlerts();
     renderZones();
     startTrafficWatchdog();
     connectToBackend();
