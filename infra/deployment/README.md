@@ -58,62 +58,14 @@ remove the legacy files after the cutover is verified.
 The cutover is a **manual step** that must happen before running Ansible.
 Ansible checks for running legacy projects and fails closed if it finds any.
 
-#### Cutover procedure (per VM, in order)
+#### Cutover status
 
-> **Never use `docker compose down -v`**. The `-v` flag deletes named volumes
-> and would destroy Kafka, RabbitMQ, and PostgreSQL data. Use only `stop`.
-
-The commands below require the per-VM `.env` file that was used to start the
-legacy project. These files live in `SMARTTRAFFIC_SECRETS_DIR` on the operator
-machine and are copied to `/etc/smarttraffic/<vm>.env` on each VM by Ansible.
-Run these commands **on each VM** (via SSH or SSM session):
-
-```sh
-# On vm-ingest — stop the simulator first to avoid new data during cutover
-docker compose \
-  --file /opt/smarttraffic/infra/vm-ingest/compose.yaml \
-  --env-file /etc/smarttraffic/vm-ingest.env \
-  --project-name smarttraffic-vm-ingest \
-  stop
-
-# On vm-core
-docker compose \
-  --file /opt/smarttraffic/infra/vm-core/compose.yaml \
-  --env-file /etc/smarttraffic/vm-core.env \
-  --project-name smarttraffic-vm-core \
-  stop
-
-# On vm-app
-docker compose \
-  --file /opt/smarttraffic/infra/vm-app/compose.yaml \
-  --env-file /etc/smarttraffic/vm-app.env \
-  --project-name smarttraffic-vm-app \
-  stop
-
-# On vm-data — stop brokers after consumers are down
-docker compose \
-  --file /opt/smarttraffic/infra/vm-data/compose.aws.yaml \
-  --env-file /etc/smarttraffic/vm-data.env \
-  --project-name smarttraffic-vm-data \
-  stop
-
-# On vm-auth — stop last
-docker compose \
-  --file /opt/smarttraffic/infra/vm-auth/compose.yaml \
-  --env-file /etc/smarttraffic/vm-auth.env \
-  --project-name smarttraffic-vm-auth \
-  stop
-```
-
-Verify all legacy projects are stopped before running Ansible:
-
-```sh
-docker compose ls   # none of the smarttraffic-vm-* names should appear as running
-```
-
-Ansible will then start the canonical project (`smarttraffic`) with the
-appropriate profile per VM. If any legacy project is still running, Ansible
-fails with a message listing which projects to stop.
+The migration to the canonical Compose file was completed on all five VMs.
+All running containers were confirmed to use
+`/opt/smarttraffic/infra/compose.yaml`. The per-VM Compose files have been
+removed from the repository. The legacy guard in Ansible remains active: if
+a legacy project name (`smarttraffic-vm-*`) is found running on any VM,
+Ansible will fail with a clear message before starting any services.
 
 #### Idempotence
 

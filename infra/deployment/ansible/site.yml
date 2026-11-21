@@ -522,9 +522,13 @@
         fail_msg: >-
           The following legacy Compose projects are still running on
           {{ inventory_hostname }}: {{ smarttraffic_running_legacy | join(', ') }}.
-          Stop them manually before rerunning this playbook (never use down -v).
-          See infra/deployment/README.md for the full cutover procedure with
-          the exact --file and --env-file arguments for each VM.
+          Stop their containers without deleting volumes by running on that VM:
+            docker ps --filter label=com.docker.compose.project=PROJECT --format '{{ '{{' }}.Names{{ '}}' }}'
+            docker stop $(docker ps --filter label=com.docker.compose.project=PROJECT -q)
+          Replace PROJECT with each name listed above. Never use 'docker compose down -v':
+          it deletes named volumes managed by Compose and would destroy persistent data.
+          'docker rm -v' deletes anonymous volumes only and is also unsafe here.
+          Verify with 'docker compose ls' that none appear as running, then rerun.
     - name: Build this VM's Java service images
       ansible.builtin.command:
         argv:
