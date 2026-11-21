@@ -1411,15 +1411,15 @@
     const logoutStatus = document.getElementById("logout-status");
     const zones = new Map();
     const zoneAlertHistory = new Map([
-      ["zone-1", {
-        previousStatus: "DESPEJADA",
-        currentStatus: "DESPEJADA",
+      ["zone-01", {
+        previousStatus: null,
+        currentStatus: null,
         measuredAt: null,
         received: false
       }],
-      ["zone-2", {
-        previousStatus: "DESPEJADA",
-        currentStatus: "DESPEJADA",
+      ["zone-02", {
+        previousStatus: null,
+        currentStatus: null,
         measuredAt: null,
         received: false
       }]
@@ -1443,7 +1443,7 @@
       const last = zoneAlertHistory.get(update.zoneId);
       const previousStatus = last.received
         ? last.currentStatus
-        : "DESPEJADA";
+        : update.status;
       zoneAlertHistory.set(update.zoneId, {
         previousStatus,
         currentStatus: update.status,
@@ -1475,10 +1475,14 @@
 
         const transition = document.createElement("span");
         transition.className = "alert-transition";
-        transition.textContent = `${alert.previousStatus} → `;
-        const currentStatus = document.createElement("strong");
-        currentStatus.textContent = alert.currentStatus;
-        transition.append(currentStatus);
+        if (alert.received) {
+          transition.textContent = `${alert.previousStatus} → `;
+          const currentStatus = document.createElement("strong");
+          currentStatus.textContent = alert.currentStatus;
+          transition.append(currentStatus);
+        } else {
+          transition.textContent = "Esperando estado inicial";
+        }
 
         const time = document.createElement("span");
         time.className = "alert-time";
