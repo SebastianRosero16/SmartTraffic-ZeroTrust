@@ -1458,7 +1458,10 @@
 
         const transition = document.createElement("span");
         transition.className = "alert-transition";
-        transition.innerHTML = `${alert.previousStatus} → <strong>${alert.currentStatus}</strong>`;
+        transition.textContent = `${alert.previousStatus} → `;
+        const currentStatus = document.createElement("strong");
+        currentStatus.textContent = alert.currentStatus;
+        transition.append(currentStatus);
 
         const time = document.createElement("span");
         time.className = "alert-time";
@@ -1818,6 +1821,28 @@
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       if (trafficWatchdogTimer) window.clearInterval(trafficWatchdogTimer);
       if (socket) socket.close();
+    });
+
+    window.addEventListener("pageshow", () => {
+      pageClosing = false;
+      startTrafficWatchdog();
+      if (!socket || socket.readyState === WebSocket.CLOSED
+        || socket.readyState === WebSocket.CLOSING) {
+        if (reconnectTimer) {
+          window.clearTimeout(reconnectTimer);
+          reconnectTimer = undefined;
+        }
+        reconnectDelay = 1000;
+        connectToBackend();
+      }
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible" || pageClosing) return;
+      if (!socket || socket.readyState === WebSocket.CLOSED
+        || socket.readyState === WebSocket.CLOSING) {
+        scheduleReconnect();
+      }
     });
 
     renderZones();
