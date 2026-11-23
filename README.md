@@ -302,7 +302,7 @@ El procesador elige la estrategia por variable de entorno (`TRAFFIC_DENSITY_STRA
 
 ### State — transiciones de zona
 
-`TrafficState` es una interfaz implementada por `ClearTrafficState`, `ModerateTrafficState` y `CongestedTrafficState`. Cada estado encapsula sus umbrales y decide la transición siguiente. `ZoneTrafficStateMachine` delega en el estado actual sin usar `if-else` ni `switch`.
+`TrafficState` es una interfaz implementada por `ClearTrafficState`, `ModerateTrafficState` y `CongestedTrafficState`. Cada estado encapsula sus propios umbrales y decide la transición siguiente cuando recibe la densidad calculada. `ZoneTrafficStateMachine` delega completamente en el estado actual: el procesador principal no contiene condicionales sobre el nivel de tráfico. El único `switch` del archivo inicializa el estado de partida a partir del valor configurado; una vez en marcha, cada estado determina su sucesor sin intervención externa.
 
 ### Observer — eventos de dominio
 
@@ -386,6 +386,10 @@ Límites verificados con `docker inspect` en los 11 contenedores corriendo en AW
 
 `infra/compose.yaml` define los 10 servicios una sola vez con perfiles. Ansible copia el archivo a cada VM y activa el perfil correspondiente. Los Compose de prueba (`infra/vm-data/postgres-it/compose.yaml`, `infra/vm-data/rabbitmq/compose.yaml`) se mantienen separados porque son fixtures de integración, no de despliegue.
 
+### Instancias y gobernanza de recursos
+
+Todos los servicios declaran límites estrictos de CPU y memoria en `deploy.resources.limits`. El enunciado menciona `deploy.replicas` para escalar instancias; en este proyecto los dos `query_client` se definen como servicios independientes (`query-client-1` y `query-client-2`) en lugar de réplicas idénticas. La razón es que cada instancia requiere su propia identidad OAuth, su propio `client_id` y su propia cola de respuesta en RabbitMQ. `deploy.replicas` crea copias idénticas que comparten la misma configuración, lo que impediría asignar identidades y colas distintas a cada instancia.
+
 ### Aprovisionamiento con Ansible
 
 `infra/deployment/ansible/site.yml` automatiza el despliegue completo en orden:
@@ -407,7 +411,7 @@ Límites verificados con `docker inspect` en los 11 contenedores corriendo en AW
 
 ### Pruebas unitarias
 
-JUnit 5 y Mockito. Todas las pruebas de dominio corren en memoria sin Spring Boot, sin contenedores y sin red. Patrón AAA (Arrange, Act, Assert).
+JUnit 5 y Mockito. Todas las pruebas de dominio corren en memoria sin Spring Boot, sin contenedores y sin red. Siguen la estructura Arrange-Act-Assert: cada prueba prepara el estado inicial, ejecuta la operación bajo prueba y verifica el resultado esperado. Los servicios e interfaces externas se aíslan con dobles de prueba (`@Mock`, `@InjectMocks`) de Mockito; las interacciones se verifican con `verify(...)`.
 
 Ejemplos representativos:
 - `ZoneTrafficStateMachineTest` — verifica transiciones de estado sin infraestructura
