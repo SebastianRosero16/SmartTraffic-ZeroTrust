@@ -1,0 +1,21 @@
+server:
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        secure: ${AUTH_SESSION_COOKIE_SECURE:true}
+        same-site: lax
+
+spring:
+  datasource:
+    url: ${AUTH_DB_URL}
+    username: ${AUTH_DB_USER}
+    password: ${AUTH_DB_PASSWORD}
+  flyway:
+    url: ${AUTH_DB_URL}
+    user: ${AUTH_DB_MIGRATOR_USER}
+    password: ${AUTH_DB_MIGRATOR_PASSWORD}
+    schemas: dashboard_auth
+    default-schema: dashboard_auth
+    clean-disabled: true

@@ -1,0 +1,56 @@
+flush ruleset
+
+table inet smarttraffic {
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        iifname "lo" accept
+        ct state established,related accept
+
+{% if smarttraffic_role == "vm-data" %}
+        ip saddr { {{ smarttraffic_vm_ips["vm-ingest"] }}, {{ smarttraffic_vm_ips["vm-core"] }} } tcp dport 9092 accept
+        ip saddr { {{ smarttraffic_vm_ips["vm-core"] }}, {{ smarttraffic_vm_ips["vm-app"] }} } tcp dport 5672 accept
+        ip saddr { {{ smarttraffic_vm_ips["vm-core"] }}, {{ smarttraffic_vm_ips["vm-auth"] }} } tcp dport 5432 accept
+{% elif smarttraffic_role == "vm-auth" %}
+        ip saddr { {{ smarttraffic_vm_ips["vm-ingest"] }}, {{ smarttraffic_vm_ips["vm-core"] }}, {{ smarttraffic_vm_ips["vm-app"] }}, {{ smarttraffic_vm_ips["vm-data"] }}, {{ smarttraffic_vm_ips["vm-dashboard-public"] }} } tcp dport 443 accept
+{% elif smarttraffic_role == "vm-app" %}
+        ip saddr {{ smarttraffic_vm_ips["vm-dashboard-public"] }} tcp dport 8080 accept
+{% endif %}
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+    }
+
+    chain output {
+        type filter hook output priority filter; policy drop;
+
+        oifname "lo" accept
+        ct state established,related accept
+        ip daddr {{ smarttraffic_vpc_dns_ipv4 }} udp dport 53 accept
+        ip daddr {{ smarttraffic_vpc_dns_ipv4 }} tcp dport 53 accept
+        ip daddr 255.255.255.255 udp dport 67 accept
+        ip saddr 169.254.169.253 udp sport 67 udp dport 68 accept
+        ip daddr 169.254.169.254 tcp dport 80 accept
+        ip daddr 169.254.169.123 udp dport 123 accept
+
+{% if smarttraffic_temporary_https_egress %}
+        ip daddr != {{ smarttraffic_vpc_cidr }} tcp dport 443 accept
+{% endif %}
+{% if smarttraffic_role == "vm-ingest" %}
+        ip daddr {{ smarttraffic_vm_ips["vm-data"] }} tcp dport 9092 accept
+        ip daddr {{ smarttraffic_vm_ips["vm-auth"] }} tcp dport 443 accept
+{% elif smarttraffic_role == "vm-core" %}
+        ip daddr {{ smarttraffic_vm_ips["vm-data"] }} tcp dport { 9092, 5672, 5432 } accept
+        ip daddr {{ smarttraffic_vm_ips["vm-auth"] }} tcp dport 443 accept
+{% elif smarttraffic_role == "vm-app" %}
+        ip daddr {{ smarttraffic_vm_ips["vm-data"] }} tcp dport 5672 accept
+        ip daddr {{ smarttraffic_vm_ips["vm-auth"] }} tcp dport 443 accept
+{% elif smarttraffic_role == "vm-auth" %}
+        ip daddr {{ smarttraffic_vm_ips["vm-data"] }} tcp dport 5432 accept
+{% elif smarttraffic_role == "vm-data" %}
+        ip daddr {{ smarttraffic_vm_ips["vm-auth"] }} tcp dport 443 accept
+{% endif %}
+    }
+}

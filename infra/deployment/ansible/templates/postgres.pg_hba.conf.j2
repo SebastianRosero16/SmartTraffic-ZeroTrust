@@ -1,0 +1,4 @@
+local all all trust
+hostnossl all all all reject
+hostssl all all {{ smarttraffic_vm_ips["vm-core"] }}/32 scram-sha-256
+hostssl all all {{ smarttraffic_vm_ips["vm-auth"] }}/32 scram-sha-256

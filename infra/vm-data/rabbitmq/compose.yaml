@@ -1,0 +1,59 @@
+name: smarttraffic-rabbitmq-it
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.3.7
+    hostname: rabbitmq
+    restart: "no"
+    environment:
+      RABBITMQ_RESOURCE_SERVER_ID: smarttraffic-rabbitmq-it
+      RABBITMQ_OAUTH_JWKS_URI: "${RABBITMQ_OAUTH_JWKS_URI:?Set an HTTPS test JWKS URI in .env}"
+      RABBITMQ_OAUTH_CA_FILE: /etc/rabbitmq/certs/oauth-ca.pem
+      RABBITMQ_TLS_CERT_FILE: /etc/rabbitmq/certs/server.pem
+      RABBITMQ_TLS_KEY_FILE: /etc/rabbitmq/certs/server-key.pem
+    volumes:
+      - type: bind
+        source: ./rabbitmq.conf
+        target: /etc/rabbitmq/rabbitmq.conf
+        read_only: true
+      - type: bind
+        source: ./enabled_plugins
+        target: /etc/rabbitmq/enabled_plugins
+        read_only: true
+      - type: bind
+        source: ./definitions.json
+        target: /etc/rabbitmq/definitions.json
+        read_only: true
+      - type: bind
+        source: "${RABBITMQ_TEST_CERT_DIR:?Set RABBITMQ_TEST_CERT_DIR outside Git}"
+        target: /etc/rabbitmq/certs
+        read_only: true
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - rabbitmq-it
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - rabbitmq-diagnostics
+        - -q
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+networks:
+  rabbitmq-it:
+    driver: bridge
+
+volumes:
+  rabbitmq-data:
